@@ -204,12 +204,16 @@ function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock,
         </div>
       </div>
 
-      {/* Stripe Secure Inputs */}
+      {/* Card Inputs */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Card Number</label>
-          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            <CardNumberElement options={stripeElementStyle} onChange={handleCardNumChange} />
+          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+            {isMock ? (
+              <input type="text" defaultValue="4242 4242 4242 4242" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+            ) : (
+              <CardNumberElement options={stripeElementStyle} onChange={handleCardNumChange} />
+            )}
           </div>
         </div>
 
@@ -230,18 +234,32 @@ function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock,
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">Expiry Date</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardExpiryElement options={stripeElementStyle} />
+            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              {isMock ? (
+                <input type="text" defaultValue="12/28" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+              ) : (
+                <CardExpiryElement options={stripeElementStyle} />
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">CVV / Code</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardCvcElement
-                options={stripeElementStyle}
-                onFocus={() => setCardFlipped(true)}
-                onBlur={() => setCardFlipped(false)}
-              />
+            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              {isMock ? (
+                <input
+                  type="password"
+                  defaultValue="123"
+                  onFocus={() => setCardFlipped(true)}
+                  onBlur={() => setCardFlipped(false)}
+                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }}
+                />
+              ) : (
+                <CardCvcElement
+                  options={stripeElementStyle}
+                  onFocus={() => setCardFlipped(true)}
+                  onBlur={() => setCardFlipped(false)}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1631,7 +1649,7 @@ export default function Storefront() {
               <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              <Elements stripe={stripePromise} options={{ clientSecret }}>
+              {isMockPayment ? (
                 <StripePaymentForm
                   clientSecret={clientSecret}
                   orderId={checkoutOrderId}
@@ -1650,7 +1668,28 @@ export default function Storefront() {
                     setTimeout(() => setAuthOpen(true), 1200);
                   }}
                 />
-              </Elements>
+              ) : (
+                <Elements stripe={stripePromise} options={{ clientSecret }}>
+                  <StripePaymentForm
+                    clientSecret={clientSecret}
+                    orderId={checkoutOrderId}
+                    total={checkoutTotal}
+                    shippingName={checkoutName}
+                    isMock={isMockPayment}
+                    onBack={() => setCheckoutStep('shipping')}
+                    onSuccess={() => {
+                      setCart([]);
+                      updateLocalStorage([]);
+                      setCheckoutStep('cart');
+                      setCartOpen(false);
+                      fly('Payment received successfully. Order initialized.');
+                      fetchOrders();
+                      setAuthMode('profile');
+                      setTimeout(() => setAuthOpen(true), 1200);
+                    }}
+                  />
+                </Elements>
+              )}
             </div>
           </>
         )}
