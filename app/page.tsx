@@ -64,11 +64,12 @@ interface PaymentFormProps {
   orderId: string;
   total: number;
   shippingName: string;
+  isMock?: boolean;
   onSuccess: () => void;
   onBack: () => void;
 }
 
-function StripePaymentForm({ clientSecret, orderId, total, shippingName, onSuccess, onBack }: PaymentFormProps) {
+function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock, onSuccess, onBack }: PaymentFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
@@ -80,10 +81,16 @@ function StripePaymentForm({ clientSecret, orderId, total, shippingName, onSucce
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stripe || !elements) return;
-
     setLoading(true);
     setErrorMessage('');
+
+    if (isMock) {
+      await new Promise(r => setTimeout(r, 700));
+      onSuccess();
+      return;
+    }
+
+    if (!stripe || !elements) return;
 
     const cardNumberElement = elements.getElement(CardNumberElement);
     if (!cardNumberElement) return;
@@ -316,6 +323,7 @@ export default function Storefront() {
   const [clientSecret, setClientSecret] = useState('');
   const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
+  const [isMockPayment, setIsMockPayment] = useState(false);
 
   // Tracking Portal states
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -632,6 +640,7 @@ export default function Storefront() {
         setClientSecret(data.clientSecret);
         setCheckoutOrderId(data.orderId);
         setCheckoutTotal(data.total);
+        setIsMockPayment(!!data.mock);
         setCheckoutStep('payment');
       } else {
         fly(data.error || 'Failed to initialize checkout');
@@ -1628,6 +1637,7 @@ export default function Storefront() {
                   orderId={checkoutOrderId}
                   total={checkoutTotal}
                   shippingName={checkoutName}
+                  isMock={isMockPayment}
                   onBack={() => setCheckoutStep('shipping')}
                   onSuccess={() => {
                     setCart([]);

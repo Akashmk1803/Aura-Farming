@@ -4,7 +4,7 @@ import { orders, orderItems, products } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
-import { stripe } from '@/lib/stripe';
+import { createPaymentIntent } from '@/lib/payment';
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,8 +23,6 @@ export async function POST(req: NextRequest) {
     const orderId = 'AURA-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
     // ─── PHASE 1: Synchronous stock validation & total calculation ───────────
-    // better-sqlite3 transactions are SYNCHRONOUS — no await allowed inside.
-    // Validate everything first, outside the transaction.
     let subtotal = 0;
     const validatedItems: {
       productId: string;
@@ -58,20 +56,16 @@ export async function POST(req: NextRequest) {
     const shippingFee = subtotal >= 4999 ? 0 : 199;
     const total = subtotal + shippingFee;
 
-    // ─── PHASE 2: Async Stripe call (outside the transaction) ────────────────
+    // ─── PHASE 2: Payment intent (real Stripe or mock) ────────────────
     let paymentIntent;
     try {
-      paymentIntent = await stripe.paymentIntents.create({
-        amount: total * 100, // Stripe expects amount in paise (INR)
-        currency: 'inr',
-        metadata: {
-          orderId,
-          userId: userId || 'guest',
-        },
-        description: `Aura Farming checkout: ${orderId}`,
-      });
+      paymentIntent = await createPaymentIntent(
+        total * 100,
+        { orderId, userId: userId || 'guest' },
+        `Aura Farming checkout: ${orderId}`
+      );
     } catch (stripeErr: any) {
-      console.error('Stripe PaymentIntent creation failed:', stripeErr);
+      console.error('Payment intent creation failed:', stripeErr);
       return NextResponse.json(
         { error: `Payment gateway error: ${stripeErr.message}` },
         { status: 502 }
@@ -88,7 +82,7 @@ export async function POST(req: NextRequest) {
         subtotal,
         shippingFee,
         total,
-        status: 'pending',
+        status: paymentIntent.mock ? 'paid' : 'pending',
         stripePaymentIntentId: paymentIntent.id,
       }).run();
 
@@ -107,7 +101,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { orderId, subtotal, shippingFee, total, clientSecret: paymentIntent.client_secret, status: 'pending' },
+      { orderId, subtotal, shippingFee, total, clientSecret: paymentIntent.client_secret, mock: paymentIntent.mock, status: paymentIntent.mock ? 'paid' : 'pending' },
       { status: 201 }
     );
   } catch (error: any) {
