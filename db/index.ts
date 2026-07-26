@@ -2,7 +2,18 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import Database from 'better-sqlite3';
 import path from 'path';
 import * as schema from './schema';
-import bcrypt from 'bcryptjs';
+import { randomBytes, scryptSync } from 'node:crypto';
+
+function hashPasswordSync(password: string): string {
+  const salt = randomBytes(16).toString('hex');
+  const key = scryptSync(password.normalize('NFKC'), salt, 64, {
+    N: 16384,
+    r: 16,
+    p: 1,
+    maxmem: 128 * 16384 * 16 * 2,
+  });
+  return `${salt}:${key.toString('hex')}`;
+}
 
 const dbPath = path.join(process.cwd(), 'database.db');
 const sqlite = new Database(dbPath);
@@ -132,22 +143,35 @@ if (productCount.count === 0) {
   console.log('Seeded database with initial products catalog.');
 }
 
-// Seed default administrator if not present
-const adminCheck = sqlite.prepare("SELECT * FROM user WHERE email = ?").get("admin@aurafarming.in");
+// Seed default administrator if not present (Better Auth uses scrypt, not bcrypt)
+const adminEmail = 'admin@aurafarming.in';
+const adminPassword = 'adminpassword123';
+const adminCheck = sqlite.prepare('SELECT * FROM user WHERE email = ?').get(adminEmail) as
+  | { id: string }
+  | undefined;
+const adminAccount = sqlite.prepare('SELECT * FROM account WHERE accountId = ?').get(adminEmail) as
+  | { id: string; password: string | null }
+  | undefined;
+const adminHash = hashPasswordSync(adminPassword);
+
 if (!adminCheck) {
-  const salt = bcrypt.genSaltSync(10);
-  const hash = bcrypt.hashSync('adminpassword123', salt);
-  
   const userId = 'admin-user-id';
   sqlite.prepare(`
     INSERT OR IGNORE INTO user (id, name, email, emailVerified, createdAt, updatedAt, role, shippingAddress)
-    VALUES (?, 'Aura Administrator', 'admin@aurafarming.in', 1, ?, ?, 'admin', '')
-  `).run(userId, Date.now(), Date.now());
+    VALUES (?, 'Aura Administrator', ?, 1, ?, ?, 'admin', '')
+  `).run(userId, adminEmail, Date.now(), Date.now());
 
   sqlite.prepare(`
     INSERT OR IGNORE INTO account (id, accountId, providerId, userId, password, createdAt, updatedAt)
     VALUES (?, ?, 'credential', ?, ?, ?, ?)
-  `).run('admin-account-id', 'admin@aurafarming.in', userId, hash, Date.now(), Date.now());
-  
-  console.log("Seeded admin account admin@aurafarming.in with password adminpassword123");
+  `).run('admin-account-id', adminEmail, userId, adminHash, Date.now(), Date.now());
+
+  console.log(`Seeded admin account ${adminEmail} with password ${adminPassword}`);
+} else if (!adminAccount?.password || adminAccount.password.startsWith('$2')) {
+  sqlite.prepare('UPDATE account SET password = ?, updatedAt = ? WHERE accountId = ?').run(
+    adminHash,
+    Date.now(),
+    adminEmail
+  );
+  console.log(`Updated admin account ${adminEmail} to Better Auth scrypt password hash`);
 }
