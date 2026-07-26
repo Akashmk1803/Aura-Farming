@@ -1,0 +1,89 @@
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+
+export const products = sqliteTable('products', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description'),
+  price: integer('price').notNull(),
+  category: text('category').notNull(),
+  categoryLabel: text('category_label').notNull(),
+  artSvgKey: text('art_svg_key').notNull(),
+  stock: integer('stock').default(50).notNull(),
+});
+
+// Better Auth Tables
+export const user = sqliteTable('user', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  email: text('email').unique().notNull(),
+  emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull(),
+  image: text('image'),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
+  role: text('role').default('user'),
+  shippingAddress: text('shippingAddress').default(''),
+});
+
+export const session = sqliteTable('session', {
+  id: text('id').primaryKey(),
+  expiresAt: integer('expiresAt', { mode: 'timestamp' }).notNull(),
+  token: text('token').unique().notNull(),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
+  ipAddress: text('ipAddress'),
+  userAgent: text('userAgent'),
+  userId: text('userId').notNull().references(() => user.id),
+});
+
+export const account = sqliteTable('account', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull(),
+  providerId: text('providerId').notNull(),
+  userId: text('userId').notNull().references(() => user.id),
+  accessToken: text('accessToken'),
+  refreshToken: text('refreshToken'),
+  idToken: text('idToken'),
+  expiresAt: integer('expiresAt', { mode: 'timestamp' }),
+  password: text('password'),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
+});
+
+export const verification = sqliteTable('verification', {
+  id: text('id').primaryKey(),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: integer('expiresAt', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('createdAt', { mode: 'timestamp' }),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' }),
+});
+
+// Orders & Order Items
+export const orders = sqliteTable('orders', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').references(() => user.id),
+  shippingName: text('shipping_name').notNull(),
+  shippingAddress: text('shipping_address').notNull(),
+  subtotal: integer('subtotal').notNull(),
+  shippingFee: integer('shipping_fee').notNull(),
+  total: integer('total').notNull(),
+  status: text('status').default('pending').notNull(), // 'pending', 'paid', 'shipped', 'out_for_delivery', 'delivered'
+  createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+});
+
+export const orderItems = sqliteTable('order_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: text('order_id').notNull().references(() => orders.id),
+  productId: text('product_id').notNull().references(() => products.id),
+  size: text('size').notNull(),
+  quantity: integer('quantity').notNull(),
+  price: integer('price').notNull(),
+});
+
+export const wishlist = sqliteTable('wishlist', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull().references(() => user.id),
+  productId: text('product_id').notNull().references(() => products.id),
+  createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
+});
