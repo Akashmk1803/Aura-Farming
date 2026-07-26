@@ -591,7 +591,16 @@ export default function Storefront() {
     setWishlistItems([]);
     setAdminOpen(false);
     setAuthOpen(false);
+    // Clear cart from state AND localStorage so it doesn't rehydrate after login
+    setCart([]);
+    try { localStorage.removeItem('aura_cart'); } catch (_) {}
     fly('Logged out successfully.');
+  };
+
+  // Open admin drawer and always fetch fresh stats
+  const openAdminDrawer = () => {
+    setAdminOpen(true);
+    fetchAdminStats();
   };
 
   // Checkout POST to create pending order and Stripe PaymentIntent
@@ -1503,7 +1512,7 @@ export default function Storefront() {
           <div className="foot-copy">
             &copy; 2026 Aura Farming &middot;{' '}
             {(user as any)?.role === 'admin' && (
-              <a onClick={() => { fetchAdminStats(); setAdminOpen(true); }} style={{ color: 'var(--dim2)', textDecoration: 'underline', cursor: 'pointer' }}>
+              <a onClick={openAdminDrawer} style={{ color: 'var(--dim2)', textDecoration: 'underline', cursor: 'pointer' }}>
                 Admin Portal
               </a>
             )}
@@ -1827,7 +1836,17 @@ export default function Storefront() {
           <h3 style={{ fontFamily: 'var(--disp)', fontWeight: 400, fontSize: '1.3rem', textTransform: 'uppercase' }}>Admin Console</h3>
           <button className="cart-close" onClick={() => setAdminOpen(false)}>&times;</button>
         </div>
-        
+
+        {/* Loading skeleton while stats are being fetched */}
+        {!adminStats && adminOpen && (
+          <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px' }}>
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} style={{ height: '72px', background: 'rgba(236,232,225,0.04)', border: '1px solid var(--hair)', borderRadius: '12px', animation: 'pulse 1.6s ease-in-out infinite' }} />
+            ))}
+            <p style={{ textAlign: 'center', color: 'var(--dim)', fontSize: '0.75rem', fontFamily: 'var(--serif)', fontStyle: 'italic', marginTop: '8px' }}>Loading analytics…</p>
+          </div>
+        )}
+
         {adminStats && (() => {
           const lowStockCount = adminStats.products.filter((p: any) => p.stock < 15).length;
           const aov = Math.round(adminStats.totalSales / (adminStats.totalOrders || 1));
