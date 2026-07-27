@@ -1913,22 +1913,22 @@ export default function Storefront() {
                 {formErrors.pin && <span className="addr-err">{formErrors.pin}</span>}
               </div>
 
-              {/* 5. Locality */}
-              <div className="addr-field">
-                <label className="foot-label">Locality / Area / Street *</label>
-                <div className="notify-box">
-                  <input type="text" value={checkoutLocality} onChange={e => setCheckoutLocality(e.target.value)} placeholder="Bandra West" required />
-                </div>
-                {formErrors.locality && <span className="addr-err">{formErrors.locality}</span>}
-              </div>
-
-              {/* 6. Flat / Building */}
+              {/* 5. Flat / Building */}
               <div className="addr-field">
                 <label className="foot-label">Flat No. / Building Name *</label>
                 <div className="notify-box">
                   <input type="text" value={checkoutFlat} onChange={e => setCheckoutFlat(e.target.value)} placeholder="B-204, Horizon Apartments" required />
                 </div>
                 {formErrors.flat && <span className="addr-err">{formErrors.flat}</span>}
+              </div>
+
+              {/* 6. Locality */}
+              <div className="addr-field">
+                <label className="foot-label">Locality / Area / Street *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutLocality} onChange={e => setCheckoutLocality(e.target.value)} placeholder="Bandra West" required />
+                </div>
+                {formErrors.locality && <span className="addr-err">{formErrors.locality}</span>}
               </div>
 
               {/* 7. Landmark */}
