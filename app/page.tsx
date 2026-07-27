@@ -1426,6 +1426,77 @@ export default function Storefront() {
               Nothing here yet. The archive stays closed.
             </div>
           )}
+
+          {/* NEXT DROP teaser card — only in Limited view, never counted in badge */}
+          {activeCat === 'limited' && (
+            <article
+              className="card reveal in"
+              data-cat="limited-teaser"
+              style={{ cursor: 'pointer', opacity: 1 }}
+              onClick={() => window.location.href = '/limited-drops'}
+            >
+              <div className="card-media" style={{ position: 'relative' }}>
+                <span className="tag" style={{ opacity: 0.4 }}>??? / —</span>
+                <span className="cat-tag" style={{ opacity: 0.5 }}>Limited</span>
+                <div className="fig">
+                  <div className="shadow" style={{ opacity: 0.3 }} />
+                  <div className="lift">
+                    {/* Dimmed lock / question mark placeholder in place of real SVG */}
+                    <div className="spin" style={{ opacity: 0.18, filter: 'blur(0.5px)' }}>
+                      <svg viewBox="0 0 200 220" style={{ width: '100%', height: '100%' }}>
+                        {/* Ghosted hoodie silhouette */}
+                        <path d="M62 52 Q58 30 78 22 Q100 12 122 22 Q142 30 138 52 L162 62 Q176 68 178 84 L186 150 Q187 160 177 162 L156 166 Q149 167 148 158 L144 120 L144 196 Q144 206 134 206 L66 206 Q56 206 56 196 L56 120 L52 158 Q51 167 44 166 L23 162 Q13 160 14 150 L22 84 Q24 68 38 62 Z" fill="#17171a" stroke="#2c2c31" strokeWidth="2"/>
+                        {/* Lock icon centered */}
+                        <rect x="83" y="108" width="34" height="28" rx="5" fill="none" stroke="#e10600" strokeWidth="2.5"/>
+                        <path d="M90 108 Q90 92 100 92 Q110 92 110 108" fill="none" stroke="#e10600" strokeWidth="2.5" strokeLinecap="round"/>
+                        <circle cx="100" cy="122" r="3.5" fill="#e10600"/>
+                        <line x1="100" y1="125" x2="100" y2="130" stroke="#e10600" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                {/* Overlay pulsing label */}
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', gap: '10px', pointerEvents: 'none'
+                }}>
+                  <div style={{
+                    fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.22em',
+                    color: 'var(--red)', textTransform: 'uppercase',
+                    animation: 'pulse 2.4s ease-in-out infinite',
+                    padding: '6px 14px', border: '1px solid rgba(225,6,0,0.35)',
+                    borderRadius: '4px', background: 'rgba(225,6,0,0.06)',
+                  }}>
+                    NEXT DROP
+                  </div>
+                  <div style={{ fontFamily: 'var(--serif)', fontSize: '0.55rem', color: 'var(--dim)', letterSpacing: '0.12em', fontStyle: 'italic' }}>
+                    tap to join the waitlist
+                  </div>
+                </div>
+              </div>
+
+              <div className="card-body">
+                <div className="top" style={{ pointerEvents: 'none' }}>
+                  <div className="meta">
+                    <h3 style={{ color: 'var(--dim)', letterSpacing: '0.12em' }}>More Coming</h3>
+                    <div className="desc" style={{ color: 'var(--dim2)' }}>Limited archive expanding. Notify me.</div>
+                  </div>
+                  {/* No price */}
+                </div>
+                {/* No sizes or add-to-cart */}
+                <div style={{
+                  marginTop: '14px', padding: '10px 0',
+                  borderTop: '1px solid var(--hair2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  color: 'var(--red)', fontFamily: 'var(--disp)', fontSize: '0.6rem',
+                  letterSpacing: '0.16em', textTransform: 'uppercase',
+                }}>
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  View Limited Drops
+                </div>
+              </div>
+            </article>
+          )}
         </div>
       </section>
 
