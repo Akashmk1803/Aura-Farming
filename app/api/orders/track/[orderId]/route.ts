@@ -48,6 +48,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ orde
       total: order.total,
       status: simulatedStatus,
       created_at: order.createdAt,
+      paymentMethod: order.paymentMethod,
+      refundAmount: order.refundAmount,
       items
     });
   } catch (error) {

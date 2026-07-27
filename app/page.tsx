@@ -6,6 +6,7 @@ import { Elements, useStripe, useElements, CardNumberElement, CardExpiryElement,
 import { authClient } from '@/lib/auth-client';
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_51NpxXhSFg0WkGypYwK8j7h6g5f4d3s2a1qW2e3r4t5y6u7i8o9p0AURA');
+const COD_FEE = 199; // Cash on Delivery always charges this handling fee
 
 // Hardcoded premium SVG models exactly matching client catalog designs
 const SVGS = {
@@ -61,6 +62,8 @@ interface Order {
   status: string;
   created_at: string;
   items: OrderItem[];
+  paymentMethod?: string;
+  refundAmount?: number | null;
 }
 
 // ─── Shared card visualizer (used by both mock and real forms) ───────────────
@@ -288,13 +291,14 @@ export default function Storefront() {
   const [detailSize, setDetailSize] = useState('M');
 
   // Checkout Wizard states
-  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment'>('cart');
+  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
   const [checkoutName, setCheckoutName] = useState('');
   const [checkoutAddress, setCheckoutAddress] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
   const [isMockPayment, setIsMockPayment] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
 
   // Tracking Portal states
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -584,18 +588,24 @@ export default function Storefront() {
     fetchAdminStats();
   };
 
-  // Checkout POST to create pending order and Stripe PaymentIntent
+  // Shipping form submit → go to payment method selection
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checkoutName || !checkoutAddress) {
       fly('Recipient name and address are required.');
       return;
     }
+    setCheckoutStep('payment-method');
+  };
 
+  // Called after payment method is confirmed — creates order and routes appropriately
+  const handlePaymentMethodConfirm = async (method: 'card' | 'upi' | 'cod') => {
+    setSelectedPaymentMethod(method);
     try {
       const payload = {
         shipping_name: checkoutName,
         shipping_address: checkoutAddress,
+        payment_method: method,
         items: cart.map(item => ({
           productId: item.pid,
           size: item.size,
@@ -609,14 +619,28 @@ export default function Storefront() {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (res.ok) {
+      if (!res.ok) {
+        fly(data.error || 'Failed to initialize checkout');
+        return;
+      }
+
+      if (method === 'cod') {
+        // COD: skip card form, go straight to confirmation
+        setCart([]);
+        updateLocalStorage([]);
+        setCheckoutStep('cart');
+        setCartOpen(false);
+        fly('Order placed! Cash on Delivery — pay ₹' + data.total.toLocaleString('en-IN') + ' upon arrival.');
+        fetchOrders();
+        setAuthMode('profile');
+        setTimeout(() => setAuthOpen(true), 1200);
+      } else {
+        // Card or UPI: go to payment form
         setClientSecret(data.clientSecret);
         setCheckoutOrderId(data.orderId);
         setCheckoutTotal(data.total);
         setIsMockPayment(!!data.mock);
         setCheckoutStep('payment');
-      } else {
-        fly(data.error || 'Failed to initialize checkout');
       }
     } catch (err) {
       fly('Checkout connection failed');
@@ -692,7 +716,9 @@ export default function Storefront() {
   // Helper properties
   const cartQty = cart.reduce((a, c) => a + c.qty, 0);
   const cartSubtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
-  const cartShippingFee = cartSubtotal >= 4999 || cartQty === 0 ? 0 : 199;
+  // Shipping fee is payment-method-aware:
+  // COD = always ₹199 (extra handling), Prepaid (card/upi) = always FREE
+  const cartShippingFee = selectedPaymentMethod === 'cod' ? (cartQty === 0 ? 0 : COD_FEE) : 0;
   const cartTotal = cartSubtotal + cartShippingFee;
 
   const updateLocalStorage = (newCart: CartItem[]) => {
@@ -1724,7 +1750,7 @@ export default function Storefront() {
               }}>
                 Checkout<span className="arr">&rarr;</span>
               </button>
-              <div className="cart-note">Secure checkout &middot; Free shipping over ₹4,999</div>
+              <div className="cart-note">Prepaid (Card/UPI): Free shipping · COD: ₹199 handling fee</div>
             </div>
           </>
         ) : checkoutStep === 'shipping' ? (
@@ -1756,21 +1782,73 @@ export default function Storefront() {
                 />
               </div>
 
-              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Proceed to Payment</button>
+              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Choose Payment Method<span className="arr">&rarr;</span></button>
             </form>
+          </>
+        ) : checkoutStep === 'payment-method' ? (
+          <>
+            <div className="cart-head">
+              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment Mode</h3>
+              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
+            </div>
+            <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '20px 24px', overflowY: 'auto' }}>
+              <p style={{ color: 'var(--dim)', fontSize: '0.8rem', fontFamily: 'var(--serif)', fontStyle: 'italic', marginBottom: '6px' }}>
+                Select how you want to pay.
+              </p>
+
+              {([
+                { id: 'card', label: 'Credit / Debit Card', icon: '💳', note: 'Free shipping · Instant confirmation', live: true },
+                { id: 'upi',  label: 'UPI',                  icon: '⚡', note: 'Free shipping · Instant confirmation', live: true },
+                { id: 'cod',  label: 'Cash on Delivery',     icon: '📦', note: '₹199 handling fee applies',            live: true },
+                { id: 'nb',   label: 'NetBanking',            icon: '🏦', note: 'Coming soon',                         live: false },
+                { id: 'wlt',  label: 'Wallet',               icon: '👛', note: 'Coming soon',                         live: false },
+                { id: 'emi',  label: 'EMI',                  icon: '📅', note: 'Coming soon',                         live: false },
+              ] as const).map(method => (
+                <button
+                  key={method.id}
+                  type="button"
+                  onClick={() => {
+                    if (!method.live) { fly('Coming soon — stay tuned!'); return; }
+                    handlePaymentMethodConfirm(method.id as 'card' | 'upi' | 'cod');
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '14px',
+                    background: method.live ? 'var(--ink)' : 'rgba(255,255,255,0.02)',
+                    border: method.live ? '1px solid var(--red)' : '1px solid var(--hair2)',
+                    borderRadius: '12px', padding: '14px 16px', cursor: 'pointer',
+                    textAlign: 'left', width: '100%', transition: 'all 0.2s',
+                    opacity: method.live ? 1 : 0.45,
+                  }}
+                >
+                  <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>{method.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      {method.label}
+                    </div>
+                    <div style={{ color: 'var(--dim)', fontSize: '0.7rem', marginTop: '2px', fontFamily: 'var(--body)' }}>
+                      {method.note}
+                    </div>
+                  </div>
+                  {!method.live
+                    ? <span style={{ fontSize: '0.6rem', color: 'var(--dim2)', fontFamily: 'var(--disp)', letterSpacing: '0.12em', border: '1px solid var(--hair2)', padding: '3px 8px', borderRadius: '4px' }}>SOON</span>
+                    : <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--red)" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  }
+                </button>
+              ))}
+            </div>
           </>
         ) : (
           <>
             <div className="cart-head">
               <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment</h3>
-              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
+              <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
               {isMockPayment ? (
                 <MockPaymentForm
                   total={checkoutTotal}
                   shippingName={checkoutName}
-                  onBack={() => setCheckoutStep('shipping')}
+                  onBack={() => setCheckoutStep('payment-method')}
                   onSuccess={() => {
                     setCart([]);
                     updateLocalStorage([]);
@@ -1789,7 +1867,7 @@ export default function Storefront() {
                     orderId={checkoutOrderId}
                     total={checkoutTotal}
                     shippingName={checkoutName}
-                    onBack={() => setCheckoutStep('shipping')}
+                    onBack={() => setCheckoutStep('payment-method')}
                     onSuccess={() => {
                       setCart([]);
                       updateLocalStorage([]);
@@ -2195,7 +2273,15 @@ export default function Storefront() {
                         <span style={{ color: 'var(--bone)' }}>{o.id}</span>
                         <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>Recipient: {o.shipping_name} &middot; Total: ₹{o.total.toLocaleString('en-IN')}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>
+                        Recipient: {o.shipping_name || o.shippingName} &middot; Total: ₹{o.total.toLocaleString('en-IN')} ({o.paymentMethod ? o.paymentMethod.toUpperCase() : (o.payment_method ? o.payment_method.toUpperCase() : 'CARD')})
+                      </div>
+                      {o.status === 'returned' && (o.refundAmount !== null || o.refund_amount !== null) && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--red)', fontWeight: 500 }}>
+                          Refund: ₹{((o.refundAmount ?? o.refund_amount ?? Math.max(0, o.total - 40))).toLocaleString('en-IN')}
+                          {((o.paymentMethod || o.payment_method) !== 'cod') ? ' (₹40 deduction)' : ' (COD no refund)'}
+                        </div>
+                      )}
                       <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
                     </div>
                   ))}
@@ -2436,7 +2522,53 @@ export default function Storefront() {
                   ))}
                 </div>
               </div>
+
+              {/* Order financial summary including refund details */}
+              <div style={{ background: 'rgba(236,232,225,0.02)', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
+                  <span>Payment Method</span>
+                  <span style={{ textTransform: 'uppercase', color: 'var(--bone)', fontWeight: 600 }}>{trackingOrderData.paymentMethod || 'card'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
+                  <span>Subtotal</span>
+                  <span style={{ color: 'var(--bone)' }}>₹{trackingOrderData.subtotal.toLocaleString('en-IN')}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
+                  <span>Shipping Fee</span>
+                  <span style={{ color: 'var(--bone)' }}>{trackingOrderData.shipping_fee === 0 ? 'Free' : `₹${trackingOrderData.shipping_fee}`}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--bone)', fontWeight: 600, borderTop: '1px solid var(--hair2)', paddingTop: '8px', marginTop: '4px' }}>
+                  <span>Total Paid</span>
+                  <span style={{ color: 'var(--red)' }}>₹{trackingOrderData.total.toLocaleString('en-IN')}</span>
+                </div>
+
+                {/* Refund display if marked returned */}
+                {trackingOrderData.status === 'returned' && (
+                  <div style={{
+                    marginTop: '10px', padding: '12px', background: 'rgba(225,6,0,0.06)',
+                    border: '1px solid rgba(225,6,0,0.3)', borderRadius: '8px',
+                    display: 'flex', flexDirection: 'column', gap: '4px'
+                  }}>
+                    <div style={{ color: 'var(--red)', fontSize: '0.75rem', fontFamily: 'var(--disp)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      Refund Processed
+                    </div>
+                    <div style={{ color: 'var(--bone)', fontSize: '0.8rem', fontWeight: 600 }}>
+                      Refund Amount: ₹{(trackingOrderData.refundAmount ?? Math.max(0, trackingOrderData.total - 40)).toLocaleString('en-IN')}
+                    </div>
+                    {trackingOrderData.paymentMethod !== 'cod' ? (
+                      <div style={{ color: 'var(--dim)', fontSize: '0.7rem', fontStyle: 'italic', lineHeight: 1.3 }}>
+                        (₹{trackingOrderData.total.toLocaleString('en-IN')} paid &minus; ₹40 non-refundable handling fee)
+                      </div>
+                    ) : (
+                      <div style={{ color: 'var(--dim)', fontSize: '0.7rem', fontStyle: 'italic', lineHeight: 1.3 }}>
+                        (COD orders are not eligible for prepaid return refunds)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
+
           ) : (
             <p style={{ color: 'var(--dim2)', fontSize: '0.8rem', fontStyle: 'italic', textAlign: 'center', marginTop: '20px' }}>
               Enter an order ID to view manifest routing details.

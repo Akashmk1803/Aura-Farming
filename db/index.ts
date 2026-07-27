@@ -122,6 +122,8 @@ export const db = drizzle(sqlite, { schema });
 // SQLite throws if a column already exists; we catch and ignore those errors.
 try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_customizable INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'card'`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN refund_amount INTEGER`); } catch (_) {}
 
 // Backfill is_customizable=1 for hoodies, tees, longsleeve in existing seeded rows
 sqlite.exec(`UPDATE products SET is_customizable = 1 WHERE category IN ('hoodies', 'tees') AND is_customizable = 0`);

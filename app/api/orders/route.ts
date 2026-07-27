@@ -6,9 +6,12 @@ import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
 import { createPaymentIntent } from '@/lib/payment';
 
+const PREPAID_METHODS = ['card', 'upi'];
+const COD_FEE = 199; // always charged for COD regardless of order total
+
 export async function POST(req: NextRequest) {
   try {
-    const { shipping_name, shipping_address, items } = await req.json();
+    const { shipping_name, shipping_address, items, payment_method = 'card' } = await req.json();
 
     if (!shipping_name || !shipping_address || !items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Shipping details and items are required.' }, { status: 400 });
@@ -53,10 +56,48 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const shippingFee = subtotal >= 4999 ? 0 : 199;
+    // ─── Shipping fee: FREE for prepaid (Card/UPI), ₹199 always for COD ────
+    const isCOD = payment_method === 'cod';
+    const isPrepaid = PREPAID_METHODS.includes(payment_method);
+    const shippingFee = isCOD ? COD_FEE : 0; // prepaid = always free
     const total = subtotal + shippingFee;
 
-    // ─── PHASE 2: Payment intent (real Stripe or mock) ────────────────
+    // ─── PHASE 2: COD path — skip payment intent ──────────────────────────
+    if (isCOD) {
+      db.transaction((tx) => {
+        tx.insert(orders).values({
+          id: orderId,
+          userId,
+          shippingName: shipping_name,
+          shippingAddress: shipping_address,
+          subtotal,
+          shippingFee,
+          total,
+          status: 'pending_cod',
+          paymentMethod: 'cod',
+          stripePaymentIntentId: null,
+        }).run();
+
+        for (const item of validatedItems) {
+          tx.insert(orderItems).values({
+            orderId,
+            productId: item.productId,
+            size: item.size,
+            quantity: item.quantity,
+            price: item.price,
+          }).run();
+
+          tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
+        }
+      });
+
+      return NextResponse.json(
+        { orderId, subtotal, shippingFee, total, cod: true, status: 'pending_cod' },
+        { status: 201 }
+      );
+    }
+
+    // ─── PHASE 2 (prepaid): Payment intent (real Stripe or mock) ─────────
     let paymentIntent;
     try {
       paymentIntent = await createPaymentIntent(
@@ -83,6 +124,7 @@ export async function POST(req: NextRequest) {
         shippingFee,
         total,
         status: paymentIntent.mock ? 'paid' : 'pending',
+        paymentMethod: payment_method,
         stripePaymentIntentId: paymentIntent.id,
       }).run();
 
