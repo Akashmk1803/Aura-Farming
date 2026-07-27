@@ -1,12 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
-import { Elements, useStripe, useElements, CardNumberElement, CardExpiryElement, CardCvcElement } from '@stripe/react-stripe-js';
 import { authClient } from '@/lib/auth-client';
-
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_51NpxXhSFg0WkGypYwK8j7h6g5f4d3s2a1qW2e3r4t5y6u7i8o9p0AURA');
-
 // ─── Fee constants — mirrored exactly in app/api/orders/route.ts ─────────────
 // Card/UPI: 20 + 0 + 23 + 0   = ₹43 extra on top of bag total
 // COD:      20 + 137 + 23 + 19 = ₹199 extra on top of bag total
@@ -15,8 +10,6 @@ const PLATFORM_FEE    = 23;
 const DELIVERY_FEE_PREPAID = 0;
 const DELIVERY_FEE_COD     = 137;
 const COD_FEE_CHARGE       = 19;
-// kept for any legacy reference
-const COD_FEE = CONVENIENCE_FEE + DELIVERY_FEE_COD + PLATFORM_FEE + COD_FEE_CHARGE; // 199
 
 // Hardcoded premium SVG models exactly matching client catalog designs
 const SVGS = {
@@ -154,7 +147,7 @@ function CardVisualizer({
           <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }} />
           <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
             <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
-            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifycontent: 'center', padding: '0 8px', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.1em' }}>
+            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.1em' }}>
               {cardCvc}
             </div>
           </div>
@@ -267,46 +260,128 @@ function PayConfirmModal({
   );
 }
 
-// ─── MOCK payment form — NO Stripe hooks, plain HTML inputs ──────────────────
-function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBack }: { total: number; shippingName: string; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
+// ─── RAZORPAY payment form ──────────────────────────────────────────────────
+function RazorpayPaymentForm({ total, shippingName, shippingAddress, phone, cartItems, addressSummary, paymentMethod, onSuccess, onBack }: { total: number; shippingName: string; shippingAddress: string; phone: string; cartItems: any[]; addressSummary: string; paymentMethod: 'card' | 'upi'; onSuccess: () => void; onBack: () => void }) {
   const [loading, setLoading] = useState(false);
-  const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
-  const [cardFlipped, setCardFlipped] = useState(false);
-  const [cardNumber, setCardNumber] = useState('4242 4242 4242 4242');
-  const [expiry, setExpiry] = useState('12/28');
-  const [cvc, setCvc] = useState('123');
-  const [showCvvTooltip, setShowCvvTooltip] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isScriptLoaded, setIsScriptLoaded] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const submittingRef = React.useRef(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  const handleCardNumberChange = (val: string) => {
-    const clean = val.replace(/\D/g, '').slice(0, 16);
-    const formatted = clean.match(/.{1,4}/g)?.join(' ') || '';
-    setCardNumber(formatted);
-  };
-
-  const handleExpiryChange = (val: string) => {
-    const clean = val.replace(/\D/g, '').slice(0, 4);
-    let formatted = clean;
-    if (clean.length > 2) {
-      formatted = `${clean.slice(0, 2)}/${clean.slice(2)}`;
+  React.useEffect(() => {
+    const scriptId = 'razorpay-checkout-js';
+    if (document.getElementById(scriptId) || (window as any).Razorpay) {
+      setIsScriptLoaded(true);
+      return;
     }
-    setExpiry(formatted);
-  };
+    const script = document.createElement('script');
+    script.id = scriptId;
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => setIsScriptLoaded(true);
+    script.onerror = () => setErrorMessage('Failed to load Razorpay SDK. Please check your connection.');
+    document.body.appendChild(script);
+  }, []);
 
-  const handleCvcChange = (val: string) => {
-    const clean = val.replace(/\D/g, '').slice(0, 4);
-    setCvc(clean);
-  };
-
-  const doSubmit = async () => {
-    if (submittingRef.current) return; // re-entry guard
+  const doRazorpaySubmit = async () => {
+    if (!isScriptLoaded || !(window as any).Razorpay) {
+      setErrorMessage('Razorpay SDK is not loaded yet. Please wait.');
+      return;
+    }
+    if (submittingRef.current) return;
     submittingRef.current = true;
-    setLoading(true);
     setShowConfirmModal(false);
-    await new Promise(r => setTimeout(r, 800));
-    submittingRef.current = false;
-    onSuccess();
+    setLoading(true);
+    setErrorMessage('');
+
+    try {
+      const initRes = await fetch('/api/payment/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cartItems.map((item: any) => ({
+            productId: item.pid,
+            size: item.size,
+            quantity: item.qty
+          }))
+        }),
+      });
+      const initData = await initRes.json();
+      
+      if (!initRes.ok) {
+        throw new Error(initData.error || 'Failed to initiate order');
+      }
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+        amount: initData.total * 100,
+        currency: "INR",
+        name: "Aura Farming",
+        description: "Aura Farming Order",
+        order_id: initData.razorpayOrderId,
+        prefill: {
+          name: shippingName,
+          contact: phone,
+        },
+        theme: {
+          color: "#e10600",
+        },
+        handler: async function (response: any) {
+          try {
+            const verifyRes = await fetch('/api/payment/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...response,
+                shipping_name: shippingName,
+                shipping_address: shippingAddress,
+                phone,
+                payment_method: paymentMethod,
+                subtotal: initData.subtotal,
+                convenienceFee: initData.convenienceFee,
+                platformFee: initData.platformFee,
+                deliveryFee: initData.deliveryFee,
+                codFee: initData.codFee,
+                shippingFee: initData.shippingFee,
+                total: initData.total,
+                validatedItems: initData.validatedItems
+              }),
+            });
+            const verifyData = await verifyRes.json();
+            if (verifyRes.ok && verifyData.success) {
+              submittingRef.current = false;
+              onSuccess();
+            } else {
+              setErrorMessage(verifyData.error || 'Payment verification failed.');
+              setLoading(false);
+              submittingRef.current = false;
+            }
+          } catch {
+            setErrorMessage('Network error during verification.');
+            setLoading(false);
+            submittingRef.current = false;
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setLoading(false);
+            submittingRef.current = false;
+          }
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', function (response: any) {
+        setErrorMessage(response.error.description || 'Payment failed.');
+        setLoading(false);
+        submittingRef.current = false;
+      });
+      rzp.open();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error initiating payment');
+      setLoading(false);
+      submittingRef.current = false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -317,385 +392,33 @@ function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBac
   return (
     <>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-        <div style={{ background: 'rgba(225,6,0,0.07)', border: '1px solid rgba(225,6,0,0.25)', borderRadius: '10px', padding: '8px 14px', fontSize: '0.7rem', color: 'var(--red)', letterSpacing: '0.04em' }}>
-          ⚡ Demo mode — no real payment is processed
+        <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center', margin: '20px 0' }}>
+          Checkout with Razorpay
         </div>
-        <CardVisualizer
-          cardHolder={cardHolder}
-          cardFlipped={cardFlipped}
-          cardBrand="DEMO"
-          cardNumber={cardNumber}
-          cardExpiry={expiry}
-          cardCvc={cvc}
-          onFlipToggle={() => setCardFlipped(!cardFlipped)}
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">Card Number</label>
-            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <input
-                type="text"
-                value={cardNumber}
-                onChange={e => handleCardNumberChange(e.target.value)}
-                maxLength={19}
-                required
-                style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-              />
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">Cardholder Name</label>
-            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-              <input
-                type="text"
-                placeholder="Name on Card"
-                value={cardHolder}
-                onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
-                required
-                style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-              />
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label className="foot-label">Expiry Date</label>
-              <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-                <input
-                  type="text"
-                  placeholder="MM/YY"
-                  value={expiry}
-                  onChange={e => handleExpiryChange(e.target.value)}
-                  maxLength={5}
-                  required
-                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-                <label className="foot-label">CVV / Code</label>
-                <span
-                  onClick={() => setShowCvvTooltip(!showCvvTooltip)}
-                  onMouseEnter={() => setShowCvvTooltip(true)}
-                  onMouseLeave={() => setShowCvvTooltip(false)}
-                  style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
-                >
-                  What's This?
-                </span>
-                {showCvvTooltip && (
-                  <div style={{
-                    position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
-                    background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
-                    padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
-                    lineHeight: 1.3, fontFamily: 'var(--body)'
-                  }}>
-                    3-digit security code on the back of your card
-                  </div>
-                )}
-              </div>
-              <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-                <input
-                  type="password"
-                  value={cvc}
-                  onChange={e => handleCvcChange(e.target.value)}
-                  onFocus={() => setCardFlipped(true)}
-                  onBlur={() => setCardFlipped(false)}
-                  maxLength={4}
-                  required
-                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+        {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
         <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
           By placing this order, you agree to Aura Farming's T&amp;C
         </div>
-        <button className="checkout" type="submit" disabled={loading}>
-          {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
+        <button className="checkout" type="submit" disabled={loading || !isScriptLoaded}>
+          {loading ? 'Processing...' : !isScriptLoaded ? 'Loading Razorpay...' : `Pay ₹${total.toLocaleString('en-IN')}`}
         </button>
-        <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
+        <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
           ← Back to Shipping
         </button>
       </form>
       <PayConfirmModal
         open={showConfirmModal}
         total={total}
-        paymentMethod="card"
+        paymentMethod={paymentMethod}
         addressSummary={addressSummary}
         submitting={loading}
-        onConfirm={doSubmit}
+        onConfirm={doRazorpaySubmit}
         onCancel={() => { setShowConfirmModal(false); onBack(); }}
       />
     </>
   );
 }
 
-// ─── REAL Stripe form — must be rendered inside <Elements> provider ───────────
-function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSummary, onSuccess, onBack }: { clientSecret: string; orderId: string; total: number; shippingName: string; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
-  const [cardFlipped, setCardFlipped] = useState(false);
-  const [cardBrand, setCardBrand] = useState('AURA CARD');
-  const [showCvvTooltip, setShowCvvTooltip] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const submittingRef = React.useRef(false);
-
-  const stripeElementStyle = { style: { base: { color: '#ece8e1', fontFamily: '"Inter Tight", sans-serif', fontSize: '14px', lineHeight: '24px', '::placeholder': { color: '#65625e' } }, invalid: { color: '#e10600' } } };
-  const expiryElementOptions = { ...stripeElementStyle, placeholder: 'MM/YY' };
-
-  const doStripeSubmit = async () => {
-    if (submittingRef.current) return; // re-entry guard
-    submittingRef.current = true;
-    setShowConfirmModal(false);
-    if (!stripe || !elements) { submittingRef.current = false; return; }
-    setLoading(true);
-    setErrorMessage('');
-    const cardNumberElement = elements.getElement(CardNumberElement);
-    if (!cardNumberElement) { submittingRef.current = false; setLoading(false); return; }
-    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: cardNumberElement, billing_details: { name: shippingName } } });
-    if (error) {
-      setErrorMessage(error.message || 'Payment initiation failed.');
-      setLoading(false);
-      submittingRef.current = false;
-    } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-      try {
-        await fetch('/api/webhooks/stripe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'payment_intent.succeeded', data: { object: { id: paymentIntent.id, metadata: { orderId } } } }) });
-      } catch (err) { console.error('Webhook trigger warning:', err); }
-      submittingRef.current = false;
-      onSuccess();
-    } else {
-      setErrorMessage('Unexpected transaction status.');
-      setLoading(false);
-      submittingRef.current = false;
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setShowConfirmModal(true);
-  };
-
-  return (
-    <>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-        <CardVisualizer
-          cardHolder={cardHolder}
-          cardFlipped={cardFlipped}
-          cardBrand={cardBrand}
-        onFlipToggle={() => setCardFlipped(!cardFlipped)}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Card Number</label>
-          <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            <CardNumberElement options={stripeElementStyle} onChange={e => { if (e.brand) setCardBrand(e.brand.toUpperCase()); }} />
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Cardholder Name</label>
-          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input type="text" placeholder="Name on Card" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }} />
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">Expiry Date</label>
-            <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardExpiryElement options={expiryElementOptions} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-              <label className="foot-label">CVV / Code</label>
-              <span
-                onClick={() => setShowCvvTooltip(!showCvvTooltip)}
-                onMouseEnter={() => setShowCvvTooltip(true)}
-                onMouseLeave={() => setShowCvvTooltip(false)}
-                style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
-              >
-                What's This?
-              </span>
-              {showCvvTooltip && (
-                <div style={{
-                  position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
-                  background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
-                  padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
-                  lineHeight: 1.3, fontFamily: 'var(--body)'
-                }}>
-                  3-digit security code on the back of your card
-                </div>
-              )}
-            </div>
-            <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardCvcElement options={stripeElementStyle} onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)} />
-            </div>
-          </div>
-        </div>
-      </div>
-      {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
-      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
-        By placing this order, you agree to Aura Farming's T&amp;C
-      </div>
-      <button className="checkout" id="submitPaymentBtn" type="submit" disabled={loading || !stripe}>
-        {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
-      </button>
-      <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        ← Back to Shipping
-      </button>
-    </form>
-    <PayConfirmModal
-      open={showConfirmModal}
-      total={total}
-      paymentMethod="card"
-      addressSummary={addressSummary}
-      submitting={loading}
-      onConfirm={doStripeSubmit}
-      onCancel={() => { setShowConfirmModal(false); onBack(); }}
-    />
-    </>
-  );
-}
-
-// ─── UPI payment form — support ID collect or QR code scanning ────────────────
-function UpiPaymentForm({ total, addressSummary, onSuccess, onBack }: { total: number; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
-  const [loading, setLoading] = useState(false);
-  const [upiId, setUpiId] = useState('');
-  const [saveUpi, setSaveUpi] = useState(false);
-  const [upiError, setUpiError] = useState('');
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const submittingRef = React.useRef(false);
-
-  const doSubmit = async () => {
-    if (submittingRef.current) return; // re-entry guard
-    submittingRef.current = true;
-    setLoading(true);
-    setShowConfirmModal(false);
-    await new Promise(r => setTimeout(r, 1200));
-    submittingRef.current = false;
-    onSuccess();
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!upiId.trim() || !upiId.includes('@')) {
-      setUpiError('Please enter a valid UPI ID (e.g., name@bank)');
-      return;
-    }
-    setUpiError('');
-    setShowConfirmModal(true);
-  };
-
-  return (
-    <>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <label className="foot-label">Enter your UPI ID</label>
-        <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-          <input
-            type="text"
-            placeholder="yourname@upi"
-            value={upiId}
-            onChange={e => { setUpiId(e.target.value); if (upiError) setUpiError(''); }}
-            required
-            style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-          />
-        </div>
-        {upiError && <div style={{ color: 'var(--red)', fontSize: '0.72rem', marginTop: '2px' }}>{upiError}</div>}
-        <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', fontStyle: 'italic' }}>
-          UPI Collect is disabled as per NPCI guideline
-        </span>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <input
-          type="checkbox"
-          id="saveUpiId"
-          checked={saveUpi}
-          onChange={e => setSaveUpi(e.target.checked)}
-          style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--red)' }}
-        />
-        <label htmlFor="saveUpiId" style={{ color: 'var(--bone)', fontSize: '0.75rem', cursor: 'pointer', userSelect: 'none', fontFamily: 'var(--body)' }}>
-          Save this UPI ID for faster checkout
-        </label>
-      </div>
-
-      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '4px', fontFamily: 'var(--body)' }}>
-        By placing this order, you agree to Aura Farming's T&amp;C
-      </div>
-
-      <button className="checkout" type="submit" disabled={loading}>
-        {loading ? 'Verifying transaction...' : `Pay ₹${total.toLocaleString('en-IN')}`}
-      </button>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '8px 0' }}>
-        <div style={{ flex: 1, height: '1px', background: 'var(--hair2)' }} />
-        <span style={{ fontSize: '0.62rem', color: 'var(--dim2)', fontFamily: 'var(--disp)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>or</span>
-        <div style={{ flex: 1, height: '1px', background: 'var(--hair2)' }} />
-      </div>
-
-      <div style={{
-        background: 'var(--ink)',
-        border: '1px solid var(--hair2)',
-        borderRadius: '12px',
-        padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: '12px',
-        textAlign: 'center'
-      }}>
-        <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.72rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-          Scan QR Code
-        </div>
-        <div style={{ color: 'var(--dim)', fontSize: '0.65rem', fontFamily: 'var(--body)', margin: '-6px 0 4px' }}>
-          Scan and pay using any UPI App
-        </div>
-        <div style={{
-          width: '120px',
-          height: '120px',
-          background: '#fff',
-          borderRadius: '8px',
-          padding: '8px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-        }}>
-          <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%', fill: 'var(--ink)' }}>
-            <path d="M0 0h30v10H10v20H0V0zm10 10h10v10H10V10z" />
-            <path d="M70 0h30v30H90v-20H70V0zm10 10h10v10H80V10z" />
-            <path d="M0 70h10v20h20v10H0V70zm10 20h10v-10H10v10z" />
-            <path d="M35 35h10v10H35zm20 0h10v10H55zm0 20h10v10H55zm-20 20h10v10H35zm20 0h10v10H55zm20-35h10v10H75zm0 20h10v10H75zm-40-20h10v10H35zm20 0h10v10H55z" opacity="0.8" />
-            <path d="M45 45h10v10H45zm20 15h10v15H65zM35 60h15v5H35zm5 15h20v5H40zm25-50h5v15h-5z" opacity="0.9" />
-          </svg>
-        </div>
-        <span style={{ fontSize: '0.62rem', color: 'var(--dim2)', letterSpacing: '0.04em' }}>
-          Real-time dynamic merchant code verification enabled.
-        </span>
-      </div>
-
-      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        ← Back to Payment Mode
-      </button>
-    </form>
-    <PayConfirmModal
-      open={showConfirmModal}
-      total={total}
-      paymentMethod="upi"
-      addressSummary={addressSummary}
-      submitting={loading}
-      onConfirm={doSubmit}
-      onCancel={() => { setShowConfirmModal(false); onBack(); }}
-    />
-    </>
-  );
-}
 
 // ─── Shared order summary breakdown shown above all payment forms ─────────────
 function OrderSummary({ bagTotal, isCOD }: { bagTotal: number; isCOD: boolean }) {
@@ -874,9 +597,19 @@ export default function Storefront() {
   const [activeCat, setActiveCat] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      try { const stored = localStorage.getItem('aura_search_history'); if (stored) return JSON.parse(stored); } catch {}
+    }
+    return [];
+  });
   const [searchFocused, setSearchFocused] = useState(false);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try { const stored = localStorage.getItem('aura_cart'); if (stored) return JSON.parse(stored); } catch {}
+    }
+    return [];
+  });
   const [cartOpen, setCartOpen] = useState(false);
   const [cardSizes, setCardSizes] = useState<Record<string, string>>({});
   
@@ -940,11 +673,8 @@ export default function Storefront() {
   const [addressMode, setAddressMode] = useState<'summary' | 'list' | 'add' | 'edit'>('summary');
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
   const [checkoutIsDefault, setCheckoutIsDefault] = useState(false);
-  const [clientSecret, setClientSecret] = useState('');
-  const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
   const [checkoutBagTotal, setCheckoutBagTotal] = useState(0); // pre-fee subtotal for OrderSummary
-  const [isMockPayment, setIsMockPayment] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
 
   // Tracking Portal states
@@ -968,7 +698,6 @@ export default function Storefront() {
   const flowRef = useRef<SVGPathElement>(null);
   const tipRef = useRef<SVGCircleElement>(null);
   const tipGlowRef = useRef<SVGCircleElement>(null);
-  const cardRefs = useRef<{ [key: string]: HTMLElement | null }>({});
 
   const fly = (msg: string) => {
     setToastMessage(msg);
@@ -1016,20 +745,9 @@ export default function Storefront() {
         }
       });
 
-    // Sync cart from browser localStorage
-    try {
-      const stored = localStorage.getItem('aura_cart');
-      if (stored) setCart(JSON.parse(stored));
-    } catch (_) {}
-
-    // Sync search history from browser localStorage
-    try {
-      const storedHistory = localStorage.getItem('aura_search_history');
-      if (storedHistory) setSearchHistory(JSON.parse(storedHistory));
-    } catch (_) {}
   }, []);
 
-  const fetchOrders = async () => {
+  async function fetchOrders() {
     try {
       const res = await fetch('/api/orders/my-orders');
       if (res.ok) {
@@ -1041,7 +759,7 @@ export default function Storefront() {
     }
   };
 
-  const fetchWishlist = async () => {
+  async function fetchWishlist() {
     try {
       const res = await fetch('/api/wishlist');
       if (res.ok) {
@@ -1053,7 +771,7 @@ export default function Storefront() {
     }
   };
 
-  const fetchAddresses = async () => {
+  async function fetchAddresses() {
     try {
       const res = await fetch('/api/addresses');
       if (res.ok) {
@@ -1079,7 +797,7 @@ export default function Storefront() {
     }
   };
 
-  const fetchAdminStats = async () => {
+  async function fetchAdminStats() {
     try {
       const res = await fetch('/api/admin/stats');
       if (res.ok) {
@@ -1109,7 +827,7 @@ export default function Storefront() {
         fly(data.message);
         fetchWishlist();
       }
-    } catch (_) {
+    } catch {
       fly('Error updating favorites');
     }
   };
@@ -1179,7 +897,7 @@ export default function Storefront() {
       fly('All inputs are required.');
       return;
     }
-    const { data, error } = await authClient.signUp.email({
+    const { error } = await authClient.signUp.email({
       name: regName,
       email: regEmail,
       password: regPassword
@@ -1234,7 +952,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Failed to update settings');
       }
-    } catch (err) {
+    } catch {
       fly('Error updating profile');
     }
   };
@@ -1261,7 +979,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Password update failed');
       }
-    } catch (err) {
+    } catch {
       fly('Error updating password');
     }
   };
@@ -1276,7 +994,7 @@ export default function Storefront() {
     setAuthOpen(false);
     // Clear cart from state AND localStorage so it doesn't rehydrate after login
     setCart([]);
-    try { localStorage.removeItem('aura_cart'); } catch (_) {}
+    try { localStorage.removeItem('aura_cart'); } catch {}
     fly('Logged out successfully.');
   };
 
@@ -1370,7 +1088,7 @@ export default function Storefront() {
         const data = await res.json();
         fly(data.error || 'Failed to save address coordinates.');
       }
-    } catch (err) {
+    } catch {
       fly('Address API connection failed.');
     }
   };
@@ -1395,47 +1113,51 @@ export default function Storefront() {
   // Called after payment method is confirmed — creates order and routes appropriately
   const handlePaymentMethodConfirm = async (method: 'card' | 'upi' | 'cod') => {
     setSelectedPaymentMethod(method);
-    try {
-      const payload = {
-        shipping_name: checkoutName,
-        shipping_address: checkoutAddress,
-        phone: checkoutPhone || checkoutMobile,
-        payment_method: method,
-        items: cart.map(item => ({
-          productId: item.pid,
-          size: item.size,
-          quantity: item.qty
-        }))
-      };
+    
+    if (method === 'cod') {
+      try {
+        const payload = {
+          shipping_name: checkoutName,
+          shipping_address: checkoutAddress,
+          phone: checkoutPhone || checkoutMobile,
+          payment_method: method,
+          items: cart.map(item => ({
+            productId: item.pid,
+            size: item.size,
+            quantity: item.qty
+          }))
+        };
 
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        fly(data.error || 'Failed to initialize checkout');
-        return;
-      }
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          fly(data.error || 'Failed to initialize checkout');
+          return;
+        }
 
-      if (method === 'cod') {
-        // COD: show the COD info screen (part of 'payment' step) instead of confirming immediately
+        // COD: show the COD info screen (part of 'payment' step)
         setCheckoutTotal(data.total);
         setCheckoutBagTotal(data.subtotal);
-        setCheckoutOrderId(data.orderId);
         setCheckoutStep('payment');
-      } else {
-        // Card or UPI: go to payment form
-        setClientSecret(data.clientSecret);
-        setCheckoutOrderId(data.orderId);
-        setCheckoutTotal(data.total);
-        setCheckoutBagTotal(data.subtotal);
-        setIsMockPayment(!!data.mock);
-        setCheckoutStep('payment');
+      } catch {
+        fly('Checkout connection failed');
       }
-    } catch (err) {
-      fly('Checkout connection failed');
+    } else {
+      // For card or upi, RazorpayPaymentForm handles API calls directly.
+      // We just compute expected totals to render the summary accurately.
+      const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
+      const convenienceFee = cart.length === 0 ? 0 : CONVENIENCE_FEE;
+      const platformFee = cart.length === 0 ? 0 : PLATFORM_FEE;
+      const deliveryFee = DELIVERY_FEE_PREPAID;
+      const total = subtotal + convenienceFee + platformFee + deliveryFee;
+      
+      setCheckoutTotal(total);
+      setCheckoutBagTotal(subtotal);
+      setCheckoutStep('payment');
     }
   };
 
@@ -1461,7 +1183,7 @@ export default function Storefront() {
         const err = await res.json();
         fly(err.error || 'Failed to update stock.');
       }
-    } catch (_) {
+    } catch {
       fly('Restock connection error');
     }
   };
@@ -1483,7 +1205,7 @@ export default function Storefront() {
         const err = await res.json();
         fly(err.error || 'Failed to override status.');
       }
-    } catch (_) {
+    } catch {
       fly('Override connection error');
     }
   };
@@ -1500,7 +1222,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Order ID not recognized.');
       }
-    } catch (_) {
+    } catch {
       fly('Tracking connection error.');
     }
   };
@@ -1514,13 +1236,12 @@ export default function Storefront() {
   const cartCodFee      = (cartQty === 0) ? 0 : (isCODSelected ? COD_FEE_CHARGE : 0);
   const cartConvFee     = cartQty === 0 ? 0 : CONVENIENCE_FEE;
   const cartPlatFee     = cartQty === 0 ? 0 : PLATFORM_FEE;
-  const cartShippingFee = cartDeliveryFee; // legacy
   const cartTotal = cartSubtotal + cartConvFee + cartPlatFee + cartDeliveryFee + cartCodFee;
 
   const updateLocalStorage = (newCart: CartItem[]) => {
     try {
       localStorage.setItem('aura_cart', JSON.stringify(newCart));
-    } catch (_) {}
+    } catch {}
   };
 
   const addToCart = (p: Product, size: string, color?: string, customText?: string) => {
@@ -1741,7 +1462,7 @@ export default function Storefront() {
           } else {
             flow.style.opacity = '0';
           }
-        } catch (_) {}
+        } catch {}
       }
 
       animeId = requestAnimationFrame(tickThread);
@@ -3014,68 +2735,29 @@ export default function Storefront() {
                           setTimeout(() => setAuthOpen(true), 1200);
                         }}
                       />
-                    ) : selectedPaymentMethod === 'upi' ? (
-                      <>
-                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                        <UpiPaymentForm
-                          total={checkoutTotal}
-                          addressSummary={addressSummary}
-                          onBack={() => setCheckoutStep('payment-method')}
-                          onSuccess={() => {
-                            setCart([]);
-                            updateLocalStorage([]);
-                            setCheckoutStep('cart');
-                            setCartOpen(false);
-                            fly('Payment received successfully. Order initialized.');
-                            fetchOrders();
-                            setAuthMode('profile');
-                            setTimeout(() => setAuthOpen(true), 1200);
-                          }}
-                        />
-                      </>
-                    ) : isMockPayment ? (
-                      <>
-                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                        <MockPaymentForm
-                          total={checkoutTotal}
-                          shippingName={checkoutName}
-                          addressSummary={addressSummary}
-                          onBack={() => setCheckoutStep('payment-method')}
-                          onSuccess={() => {
-                            setCart([]);
-                            updateLocalStorage([]);
-                            setCheckoutStep('cart');
-                            setCartOpen(false);
-                            fly('Payment received successfully. Order initialized.');
-                            fetchOrders();
-                            setAuthMode('profile');
-                            setTimeout(() => setAuthOpen(true), 1200);
-                          }}
-                        />
-                      </>
                     ) : (
                       <>
                         <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                        <Elements stripe={stripePromise} options={{ clientSecret }}>
-                          <RealStripeForm
-                            clientSecret={clientSecret}
-                            orderId={checkoutOrderId}
-                            total={checkoutTotal}
-                            shippingName={checkoutName}
-                            addressSummary={addressSummary}
-                            onBack={() => setCheckoutStep('payment-method')}
-                            onSuccess={() => {
-                              setCart([]);
-                              updateLocalStorage([]);
-                              setCheckoutStep('cart');
-                              setCartOpen(false);
-                              fly('Payment received successfully. Order initialized.');
-                              fetchOrders();
-                              setAuthMode('profile');
-                              setTimeout(() => setAuthOpen(true), 1200);
-                            }}
-                          />
-                        </Elements>
+                        <RazorpayPaymentForm
+                          total={checkoutTotal}
+                          shippingName={checkoutName}
+                          shippingAddress={addressSummary}
+                          phone={checkoutMobile}
+                          cartItems={cart}
+                          addressSummary={addressSummary}
+                          paymentMethod={selectedPaymentMethod as 'card' | 'upi'}
+                          onBack={() => setCheckoutStep('payment-method')}
+                          onSuccess={() => {
+                            setCart([]);
+                            updateLocalStorage([]);
+                            setCheckoutStep('cart');
+                            setCartOpen(false);
+                            fly('Payment received successfully. Order confirmed.');
+                            fetchOrders();
+                            setAuthMode('profile');
+                            setTimeout(() => setAuthOpen(true), 1200);
+                          }}
+                        />
                       </>
                     )}
                   </>
@@ -3271,14 +2953,14 @@ export default function Storefront() {
                 <h5 className="foot-label" style={{ marginBottom: '10px' }}>Marked Lineage (Orders)</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--dim)' }}>
                   {(() => {
-                    const sorted = [...userOrders].sort((a, b) => parseSqlDate(b.created_at || b.createdAt).getTime() - parseSqlDate(a.created_at || a.createdAt).getTime());
+                    const sorted = [...userOrders].sort((a, b) => parseSqlDate(b.created_at).getTime() - parseSqlDate(a.created_at).getTime());
                     const groups: { label: string; items: typeof userOrders }[] = [];
                     const todayStr = new Date().toDateString();
                     const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
                     const yestStr = yestDate.toDateString();
                     
                     sorted.forEach(order => {
-                      const d = parseSqlDate(order.created_at || order.createdAt);
+                      const d = parseSqlDate(order.created_at);
                       const dStr = d.toDateString();
                       let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                       if (dStr === todayStr) label = 'Today';
@@ -3295,7 +2977,7 @@ export default function Storefront() {
                       <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
                         {g.items.map(order => {
-                          const dateObj = parseSqlDate(order.created_at || order.createdAt);
+                          const dateObj = parseSqlDate(order.created_at);
                           const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                           return (
                             <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>

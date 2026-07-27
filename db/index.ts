@@ -95,7 +95,7 @@ sqlite.exec(`
     total INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    stripe_payment_intent_id TEXT,
+    payment_gateway_order_id TEXT,
     FOREIGN KEY(user_id) REFERENCES user(id)
   );
 
@@ -124,17 +124,19 @@ export const db = drizzle(sqlite, { schema });
 
 // ── Safe migrations: add new columns to existing databases without wiping data ──
 // SQLite throws if a column already exists; we catch and ignore those errors.
-try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_customizable INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'card'`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN refund_amount INTEGER`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN phone TEXT DEFAULT '' NOT NULL`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_customizable INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'card'`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN refund_amount INTEGER`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN phone TEXT DEFAULT '' NOT NULL`); } catch {}
 // Fee breakdown columns — added after initial schema, safe to re-run
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN convenience_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN platform_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE orders ADD COLUMN cod_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
-try { sqlite.exec(`ALTER TABLE wishlist ADD COLUMN size TEXT NOT NULL DEFAULT 'M'`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN convenience_fee INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN platform_fee INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN cod_fee INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { sqlite.exec(`ALTER TABLE wishlist ADD COLUMN size TEXT NOT NULL DEFAULT 'M'`); } catch {}
+// Rename stripe_payment_intent_id to payment_gateway_order_id if it exists
+try { sqlite.exec(`ALTER TABLE orders RENAME COLUMN stripe_payment_intent_id TO payment_gateway_order_id`); } catch {}
 // Create addresses table if not exists
 try {
   sqlite.exec(`
@@ -154,7 +156,7 @@ try {
       is_default INTEGER NOT NULL DEFAULT 0
     )
   `);
-} catch (_) {}
+} catch {}
 
 
 

@@ -80,7 +80,7 @@ export const orders = sqliteTable('orders', {
   refundAmount: integer('refund_amount'), // set when status = 'returned' on prepaid orders
   phone: text('phone').default('').notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
-  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  paymentGatewayOrderId: text('payment_gateway_order_id'),
 });
 
 export const orderItems = sqliteTable('order_items', {

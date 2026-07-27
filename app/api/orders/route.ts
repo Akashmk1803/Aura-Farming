@@ -4,7 +4,7 @@ import { orders, orderItems, products } from '@/db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
-import { createPaymentIntent } from '@/lib/payment';
+
 import { sendWhatsAppOrderNotification } from '@/lib/whatsapp';
 
 const PREPAID_METHODS = ['card', 'upi'];
@@ -85,7 +85,6 @@ export async function POST(req: NextRequest) {
 
     // ─── Fee breakdown (mirrored exactly from UI OrderSummary) ───────────────
     const isCOD = payment_method === 'cod';
-    const isPrepaid = PREPAID_METHODS.includes(payment_method);
 
     const convenienceFee = CONVENIENCE_FEE;
     const platformFee = PLATFORM_FEE;
@@ -97,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     const itemsSummary = validatedItems.map(item => `${item.name} (${item.size}) x${item.quantity}`).join(', ');
 
-    // ─── PHASE 2 (COD): skip payment intent, go straight to confirmation ─────
+// ─── PHASE 2 (COD) ────────────────────────────────────────────────────────
     if (isCOD) {
       db.transaction((tx) => {
         tx.insert(orders).values({
@@ -115,7 +114,7 @@ export async function POST(req: NextRequest) {
           total,
           status: 'pending_cod',
           paymentMethod: 'cod',
-          stripePaymentIntentId: null,
+          paymentGatewayOrderId: null,
         }).run();
 
         for (const item of validatedItems) {
@@ -151,74 +150,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─── PHASE 2 (prepaid): create payment intent (real Stripe or mock) ──────
-    let paymentIntent;
-    try {
-      paymentIntent = await createPaymentIntent(
-        total * 100,
-        { orderId, userId: userId || 'guest' },
-        `Aura Farming checkout: ${orderId}`
-      );
-    } catch (stripeErr: any) {
-      console.error('Payment intent creation failed:', stripeErr);
-      return NextResponse.json(
-        { error: `Payment gateway error: ${stripeErr.message}` },
-        { status: 502 }
-      );
-    }
+    return NextResponse.json({ error: 'Prepaid orders must use /api/payment/create-order' }, { status: 400 });
 
-    // ─── PHASE 3: Synchronous DB transaction ─────────────────────────────────
-    db.transaction((tx) => {
-      tx.insert(orders).values({
-        id: orderId,
-        userId,
-        shippingName: shipping_name,
-        shippingAddress: shipping_address,
-        phone,
-        subtotal,
-        convenienceFee,
-        platformFee,
-        deliveryFee,
-        codFee,
-        shippingFee,
-        total,
-        status: paymentIntent.mock ? 'paid' : 'pending',
-        paymentMethod: payment_method,
-        stripePaymentIntentId: paymentIntent.id,
-      }).run();
-
-      for (const item of validatedItems) {
-        tx.insert(orderItems).values({
-          orderId,
-          productId: item.productId,
-          size: item.size,
-          quantity: item.quantity,
-          price: item.price,
-        }).run();
-
-        // Atomically decrement stock
-        tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
-      }
-    });
-
-    // Fire WhatsApp notification trigger for prepaid order
-    try {
-      await sendWhatsAppOrderNotification(phone, {
-        orderId,
-        itemsSummary,
-        total,
-        paymentMethod: payment_method,
-        shippingAddress: shipping_address,
-        recipientName: shipping_name
-      });
-    } catch (waError) {
-      console.error('Failed to trigger WhatsApp notification for prepaid:', waError);
-    }
-
-    return NextResponse.json(
-      { orderId, subtotal, convenienceFee, platformFee, deliveryFee, codFee, shippingFee, total, clientSecret: paymentIntent.client_secret, mock: paymentIntent.mock, status: paymentIntent.mock ? 'paid' : 'pending' },
-      { status: 201 }
-    );
   } catch (error: any) {
     console.error('Error during checkout transaction:', error);
     return NextResponse.json({ error: error.message || 'Transaction failed' }, { status: 500 });

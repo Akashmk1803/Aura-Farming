@@ -2,7 +2,7 @@
 
 > *Born Cursed. Worn Proud.*
 
-**Aura Farming** is a premium dark-aesthetic e-commerce storefront built with Next.js App Router, Drizzle ORM, SQLite, Better Auth, and Stripe. It features animated SVG product art, a full checkout pipeline (Card / UPI / COD), real-time order tracking, a customization builder, wishlist sync, and an admin console — all in a single-page dark glassmorphic UI.
+**Aura Farming** is a premium dark-aesthetic e-commerce storefront built with Next.js App Router, Drizzle ORM, SQLite, Better Auth, and Razorpay. It features animated SVG product art, a full checkout pipeline (Card / UPI / COD), real-time order tracking, a customization builder, wishlist sync, and an admin console — all in a single-page dark glassmorphic UI.
 
 ---
 
@@ -32,8 +32,7 @@
 | Cart — localStorage, qty controls, cross-step persistence | ✅ Real |
 | Wishlist — DB-persisted per user, size-synced | ✅ Real |
 | Shipping address management (save, default, multi-address) | ✅ Real |
-| Card checkout (Mock form or Real Stripe Elements) | ⚠️ Mocked by default |
-| UPI checkout (form + QR) | ⚠️ Fully simulated — no real collection |
+| Prepaid checkout (Card / UPI via Razorpay) | ✅ Real |
 | Cash on Delivery checkout | ✅ Real — order created, cash on delivery |
 | Pay Confirmation Modal (pre-submit review) | ✅ Real |
 | Double-submit prevention (ref lock + 15s backend dedup) | ✅ Real |
@@ -43,7 +42,7 @@
 | Customize Builder (`/customize-builder`) | ✅ Real SVG renderer |
 | WhatsApp order notification | ⚠️ Mocked to console.log |
 | Email verification on registration | ⚠️ Mocked to terminal by default |
-| Refund calculation on returns | ✅ Calculated — no Stripe reversal yet |
+| Refund calculation on returns | ✅ Calculated — no Razorpay reversal yet |
 
 ---
 
@@ -56,7 +55,7 @@ TypeScript 5              — Type safety
 better-sqlite3 12         — SQLite database engine
 Drizzle ORM 0.45          — Database query builder
 better-auth 1.6           — Authentication (sessions, email verification)
-Stripe SDK 22             — Payment gateway (mock or real)
+Razorpay SDK              — Payment gateway
 Nodemailer 9              — Email (Gmail SMTP, mock by default)
 Vanilla CSS               — All styling (globals.css, 43KB design system)
 ```
@@ -79,26 +78,28 @@ aura-farming/
 │   │   │   │   └── route.ts      GET — aggregated admin dashboard data (admin only)
 │   │   │   └── update-status/
 │   │   │       └── route.ts      POST — change order fulfillment status (admin only)
-│   │   ├── auth/
-│   │   │   └── [...auth]/
-│   │   │       └── route.ts      ALL — better-auth catch-all handler
-│   │   ├── orders/
-│   │   │   └── route.ts          POST — main checkout: validate, create order, decrement stock
-│   │   ├── products/
-│   │   │   └── route.ts          GET — full product catalogue
-│   │   ├── webhooks/
-│   │   │   └── stripe/
-│   │   │       └── route.ts      POST — Stripe payment_intent.succeeded handler
-│   │   └── wishlist/
-│   │       └── route.ts          GET (list) | POST (toggle add/remove) | PUT (update size)
-│   │
-│   ├── customize-builder/
-│   │   └── page.tsx              /customize-builder — SVG garment customizer
-│   ├── limited-drops/            (future expansion placeholder)
-│   ├── globals.css               Design tokens, animations, all component styles
-│   ├── layout.tsx                Root layout
-│   ├── page.module.css           Page-level CSS module
-│   └── page.tsx                  Main SPA — storefront, all drawers, checkout flow
+│   ├── auth/
+│   │   └── [...auth]/
+│   │       └── route.ts      ALL — better-auth catch-all handler
+│   ├── orders/
+│   │   └── route.ts          POST — main checkout: validate, create order, decrement stock
+│   ├── payment/
+│   │   ├── create-order/
+│   │   │   └── route.ts      POST — Razorpay order creation
+│   │   └── verify/
+│   │       └── route.ts      POST — Razorpay payment verification
+│   ├── products/
+│   │   └── route.ts          GET — full product catalogue
+│   └── wishlist/
+│       └── route.ts          GET (list) | POST (toggle add/remove) | PUT (update size)
+│
+├── customize-builder/
+│   └── page.tsx              /customize-builder — SVG garment customizer
+├── limited-drops/            (future expansion placeholder)
+├── globals.css               Design tokens, animations, all component styles
+├── layout.tsx                Root layout
+├── page.module.css           Page-level CSS module
+└── page.tsx                  Main SPA — storefront, all drawers, checkout flow
 │
 ├── db/
 │   ├── index.ts                  SQLite connection, auto-table creation, product seeding, admin seeding
@@ -108,8 +109,6 @@ aura-farming/
 │   ├── auth.ts                   better-auth server config (email verification, role fields)
 │   ├── auth-client.ts            better-auth React client
 │   ├── email.ts                  Nodemailer email sender (mock or live mode)
-│   ├── payment.ts                Stripe PaymentIntent creator (mock or real)
-│   ├── stripe.ts                 Stripe SDK instance
 │   └── whatsapp.ts               WhatsApp notification sender (mocked to console.log)
 │
 ├── public/                       Static assets
@@ -130,7 +129,7 @@ aura-farming/
 | Password | `adminpassword123` |
 | Access | Press `Shift + A` after logging in |
 
-### Test Card (Mock/Stripe Sandbox)
+### Test Credentials (Razorpay Sandbox)
 | Field | Value |
 |---|---|
 | Card Number | `4242 4242 4242 4242` |
@@ -150,13 +149,9 @@ BETTER_AUTH_URL="http://localhost:3000"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
 # ── Payments ───────────────────────────────────────────────────────────────
-# Set MOCK_PAYMENTS=true to skip real Stripe (order still created in DB)
-MOCK_PAYMENTS=true
-
-# Stripe keys — only needed if MOCK_PAYMENTS is not true
-STRIPE_SECRET_KEY="sk_test_..."
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="pk_test_..."
-STRIPE_WEBHOOK_SECRET="whsec_..."   # Required in production for webhook verification
+# Razorpay Test Mode Credentials
+NEXT_PUBLIC_RAZORPAY_KEY_ID="rzp_test_..."
+RAZORPAY_KEY_SECRET="sk_test_..."
 
 # ── Email ──────────────────────────────────────────────────────────────────
 # 'mock' → prints verification link to terminal (no SMTP needed)
@@ -218,8 +213,9 @@ All routes are under `/api/`. Auth-protected routes require a valid session cook
 | `GET` | `/api/wishlist` | User | List wishlist with product details + sizes |
 | `POST` | `/api/wishlist` | User | Toggle product in/out of wishlist |
 | `PUT` | `/api/wishlist` | User | Update saved size for wishlist item |
-| `POST` | `/api/orders` | Optional* | Create order (checkout endpoint) |
-| `POST` | `/api/webhooks/stripe` | Stripe sig | Handle payment_intent.succeeded |
+| `POST` | `/api/orders` | Optional* | Create order (COD only) |
+| `POST` | `/api/payment/create-order` | Optional* | Initialize Razorpay order |
+| `POST` | `/api/payment/verify` | Razorpay sig | Verify and fulfill payment |
 | `GET` | `/api/admin/stats` | Admin | Aggregated sales/orders/stock data |
 | `POST` | `/api/admin/update-status` | Admin | Change order fulfillment status |
 | `POST` | `/api/admin/restock` | Admin | Set product stock level |
@@ -231,8 +227,8 @@ All routes are under `/api/`. Auth-protected routes require a valid session cook
 
 | Status | Meaning |
 |---|---|
-| `pending` | Created, payment not yet confirmed (prepaid Stripe) |
-| `paid` | Payment confirmed by Stripe webhook |
+| `pending` | Created, payment not yet confirmed (prepaid Razorpay) |
+| `paid` | Payment confirmed by Razorpay frontend handler |
 | `pending_cod` | COD order placed — cash to be collected on delivery |
 | `shipped` | Admin has dispatched |
 | `out_for_delivery` | With last-mile courier |
@@ -276,12 +272,12 @@ products ──< wishlist
 
 | Feature | Real? | Notes |
 |---|---|---|
-| Card payment (Stripe) | ⚠️ MOCKED by default | Set `MOCK_PAYMENTS=false` + real Stripe keys to activate |
-| UPI payment | ❌ FULLY SIMULATED | No real payment collection — needs Razorpay/Cashfree integration |
+| Card payment (Razorpay) | ✅ REAL | Fully integrated with Razorpay checkout |
+| UPI payment | ✅ REAL | Fully integrated with Razorpay checkout |
 | COD order creation | ✅ REAL | Order created in DB; cash collected on delivery by courier |
 | WhatsApp notification | ⚠️ CONSOLE ONLY | Payload logged to terminal; see `lib/whatsapp.ts` to wire real Meta API |
 | Email verification | ⚠️ TERMINAL LINK | Set `EMAIL_VERIFICATION_MODE=live` + Gmail credentials to send real emails |
-| Refund calculation | ✅ CALCULATED | Amount stored in DB; no Stripe refund API call fired yet |
+| Refund calculation | ✅ CALCULATED | Amount stored in DB; no Razorpay refund API call fired yet |
 | Admin stock override | ✅ REAL | Direct DB write via `/api/admin/restock` |
 | Admin status override | ✅ REAL | Direct DB write via `/api/admin/update-status` |
 | Order tracking timeline | ✅ REAL | Reads live order `status` field from DB |

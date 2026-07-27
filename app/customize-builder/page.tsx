@@ -151,7 +151,7 @@ export default function CustomizeBuilder() {
       setTimeout(() => {
         window.location.href = '/';
       }, 1000);
-    } catch (_) {
+    } catch {
       fly('Failed to update cart.');
     } finally {
       setAdding(false);
