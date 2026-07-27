@@ -166,7 +166,7 @@ if (!adminCheck) {
     VALUES (?, ?, 'credential', ?, ?, ?, ?)
   `).run('admin-account-id', adminEmail, userId, adminHash, Date.now(), Date.now());
 
-  console.log(`Seeded admin account ${adminEmail} with password ${adminPassword}`);
+  console.log(`Seeded admin account: ${adminEmail}`);
 } else if (!adminAccount?.password || adminAccount.password.startsWith('$2')) {
   sqlite.prepare('UPDATE account SET password = ?, updatedAt = ? WHERE accountId = ?').run(
     adminHash,
