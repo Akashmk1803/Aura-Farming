@@ -37,6 +37,8 @@ interface CartItem {
   art: keyof typeof SVGS;
   size: string;
   qty: number;
+  color?: string;
+  customText?: string;
 }
 
 interface OrderItem {
@@ -699,7 +701,7 @@ export default function Storefront() {
     } catch (_) {}
   };
 
-  const addToCart = (p: Product, size: string) => {
+  const addToCart = (p: Product, size: string, color?: string, customText?: string) => {
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -707,11 +709,11 @@ export default function Storefront() {
       return;
     }
     const updated = [...cart];
-    const found = updated.find(c => c.pid === p.id && c.size === size);
+    const found = updated.find(c => c.pid === p.id && c.size === size && c.color === color && c.customText === customText);
     if (found) {
       found.qty++;
     } else {
-      updated.push({ pid: p.id, name: p.name, price: p.price, art: p.art, size: size, qty: 1 });
+      updated.push({ pid: p.id, name: p.name, price: p.price, art: p.art, size: size, qty: 1, color, customText });
     }
     setCart(updated);
     updateLocalStorage(updated);
@@ -1497,6 +1499,74 @@ export default function Storefront() {
               </div>
             </article>
           )}
+
+          {/* CUSTOMIZE teaser card — only in Customize view */}
+          {activeCat === 'customize' && (
+            <article
+              className="card reveal in"
+              data-cat="customize-teaser"
+              style={{ cursor: 'pointer', opacity: 1 }}
+              onClick={() => window.location.href = '/customize-builder'}
+            >
+              <div className="card-media" style={{ position: 'relative' }}>
+                <span className="tag" style={{ opacity: 0.4 }}>DIY / —</span>
+                <span className="cat-tag" style={{ opacity: 0.5 }}>Custom</span>
+                <div className="fig">
+                  <div className="shadow" style={{ opacity: 0.3 }} />
+                  <div className="lift">
+                    {/* Outline/sketch style garment placeholder with plus symbol */}
+                    <div className="spin" style={{ opacity: 0.25 }}>
+                      <svg viewBox="0 0 200 220" style={{ width: '100%', height: '100%' }}>
+                        {/* Outline hoodie silhouette */}
+                        <path d="M62 52 Q58 30 78 22 Q100 12 122 22 Q142 30 138 52 L162 62 Q176 68 178 84 L186 150 Q187 160 177 162 L156 166 Q149 167 148 158 L144 120 L144 196 Q144 206 134 206 L66 206 Q56 206 56 196 L56 120 L52 158 Q51 167 44 166 L23 162 Q13 160 14 150 L22 84 Q24 68 38 62 Z" fill="none" stroke="#2c2c31" strokeWidth="2" strokeDasharray="4 4"/>
+                        {/* Large Plus icon centered */}
+                        <circle cx="100" cy="110" r="28" fill="none" stroke="#e10600" strokeWidth="2"/>
+                        <line x1="88" y1="110" x2="112" y2="110" stroke="#e10600" strokeWidth="3" strokeLinecap="round"/>
+                        <line x1="100" y1="98" x2="100" y2="122" stroke="#e10600" strokeWidth="3" strokeLinecap="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                {/* Overlay pulsing label */}
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', gap: '10px', pointerEvents: 'none'
+                }}>
+                  <div style={{
+                    fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.22em',
+                    color: 'var(--red)', textTransform: 'uppercase',
+                    animation: 'pulse 2.4s ease-in-out infinite',
+                    padding: '6px 14px', border: '1px solid rgba(225,6,0,0.35)',
+                    borderRadius: '4px', background: 'rgba(225,6,0,0.06)',
+                  }}>
+                    BUILD YOUR OWN
+                  </div>
+                  <div style={{ fontFamily: 'var(--serif)', fontSize: '0.55rem', color: 'var(--dim)', letterSpacing: '0.12em', fontStyle: 'italic' }}>
+                    create custom piece
+                  </div>
+                </div>
+              </div>
+
+              <div className="card-body">
+                <div className="top" style={{ pointerEvents: 'none' }}>
+                  <div className="meta">
+                    <h3 style={{ color: 'var(--dim)', letterSpacing: '0.12em' }}>Interactive Builder</h3>
+                    <div className="desc" style={{ color: 'var(--dim2)' }}>Customize garments with color swatches & custom text.</div>
+                  </div>
+                </div>
+                <div style={{
+                  marginTop: '14px', padding: '10px 0',
+                  borderTop: '1px solid var(--hair2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  color: 'var(--red)', fontFamily: 'var(--disp)', fontSize: '0.6rem',
+                  letterSpacing: '0.16em', textTransform: 'uppercase',
+                }}>
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+                  Open Customizer
+                </div>
+              </div>
+            </article>
+          )}
         </div>
       </section>
 
@@ -1607,11 +1677,13 @@ export default function Storefront() {
             </div>
             <div className="cart-items" style={{ padding: '20px 24px' }}>
               {cart.map((c, idx) => (
-                <div className="citem" key={`${c.pid}-${c.size}`}>
+                <div className="citem" key={`${c.pid}-${c.size}-${c.color || ''}-${c.customText || ''}`}>
                   <div className="citem-fig" dangerouslySetInnerHTML={{ __html: SVGS[c.art] }}></div>
                   <div className="citem-info">
                     <h4>{c.name}</h4>
                     <div className="sz">Size {c.size}</div>
+                    {c.color && <div style={{ fontSize: '0.7rem', color: 'var(--red)', marginTop: '2px' }}>Color: {c.color}</div>}
+                    {c.customText && <div style={{ fontSize: '0.7rem', color: 'var(--bone)', fontStyle: 'italic', marginTop: '1px' }}>&ldquo;{c.customText}&rdquo;</div>}
                     <button className="rm" onClick={() => handleRemoveItem(idx)}>Remove</button>
                   </div>
                   <div className="citem-right">
