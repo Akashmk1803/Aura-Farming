@@ -27,6 +27,7 @@ interface Product {
   art: keyof typeof SVGS;
   stock: number;
   isLimited: boolean;
+  isCustomizable: boolean;
 }
 
 interface CartItem {
@@ -338,7 +339,8 @@ export default function Storefront() {
           catLabel: item.categoryLabel || item.category_label,
           art: (item.artSvgKey || item.art_svg_key) as any,
           stock: item.stock,
-          isLimited: !!(item.isLimited ?? item.is_limited),
+          isLimited: !!item.isLimited || !!item.is_limited,
+          isCustomizable: !!item.isCustomizable || !!item.is_customizable,
         }));
         setProductsList(formatted);
       })
@@ -1095,10 +1097,16 @@ export default function Storefront() {
 
   // Filter storefront cards matching search and tab states
   const filteredProducts = productsList.filter(p => {
-    const matchesCat = activeCat === 'all' || p.cat === activeCat;
+    let matchesCat: boolean;
+    if (activeCat === 'all') matchesCat = true;
+    else if (activeCat === 'limited') matchesCat = p.isLimited;
+    else if (activeCat === 'customize') matchesCat = p.isCustomizable;
+    else matchesCat = p.cat === activeCat;
     const matchesSearch = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.desc.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCat && matchesSearch;
   });
+
+  const limitedCount = productsList.filter(p => p.isLimited).length;
 
   return (
     <>
@@ -1346,15 +1354,30 @@ export default function Storefront() {
 
         {/* CATEGORY TABS */}
         <div className="cats reveal in" id="cats">
-          {['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear'].map(cat => {
-            const count = cat === 'all' ? productsList.length : productsList.filter(p => p.cat === cat).length;
-            const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+          {(['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear'] as const).map(cat => {
+            const label = cat === 'all' ? 'All' : cat.charAt(0).toUpperCase() + cat.slice(1);
             return (
               <button key={cat} className={`cat ${activeCat === cat ? 'on' : ''}`} onClick={() => setActiveCat(cat)}>
-                {label}<sup>{count}</sup>
+                {label}
               </button>
             );
           })}
+
+          {/* Limited tab — keeps count badge */}
+          <button
+            className={`cat ${activeCat === 'limited' ? 'on' : ''}`}
+            onClick={() => setActiveCat('limited')}
+          >
+            Limited{limitedCount > 0 && <sup>{limitedCount}</sup>}
+          </button>
+
+          {/* Customize tab — no badge */}
+          <button
+            className={`cat ${activeCat === 'customize' ? 'on' : ''}`}
+            onClick={() => setActiveCat('customize')}
+          >
+            Customize
+          </button>
         </div>
 
         {/* PRODUCTS GRID */}
@@ -1366,27 +1389,6 @@ export default function Storefront() {
                 <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
                   <span className="tag">001 / {p.id}</span>
                   <span className="cat-tag">{p.catLabel}</span>
-                  {p.isLimited && (
-                    <span style={{
-                      position: 'absolute',
-                      top: '10px',
-                      left: '10px',
-                      zIndex: 4,
-                      fontSize: '0.52rem',
-                      fontWeight: 700,
-                      letterSpacing: '0.12em',
-                      textTransform: 'uppercase',
-                      fontFamily: 'var(--body)',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      background: p.stock === 0 ? 'rgba(30,10,10,0.92)' : 'rgba(225,6,0,0.12)',
-                      border: p.stock === 0 ? '1px solid rgba(225,6,0,0.4)' : '1px solid var(--red)',
-                      color: 'var(--red)',
-                      backdropFilter: 'blur(4px)',
-                    }}>
-                      {p.stock === 0 ? 'SOLD OUT — ARCHIVED' : `LIMITED — ${p.stock} LEFT`}
-                    </span>
-                  )}
                   <div className="fig">
                     <div className="shadow"></div>
                     <div className="lift">
@@ -1412,15 +1414,8 @@ export default function Storefront() {
                       );
                     })}
                   </div>
-                  <button
-                    className="add"
-                    type="button"
-                    disabled={p.stock === 0}
-                    onClick={() => addToCart(p, cardSizes[p.id] || (p.cat === 'headwear' ? 'OS' : 'M'))}
-                    style={p.stock === 0 ? { opacity: 0.38, cursor: 'not-allowed', filter: 'grayscale(1)' } : {}}
-                  >
-                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                    {p.stock === 0 ? 'Archived' : 'Add to Cart'}
+                  <button className="add" type="button" onClick={() => addToCart(p, cardSizes[p.id] || (p.cat === 'headwear' ? 'OS' : 'M'))}>
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Cart
                   </button>
                 </div>
               </article>
@@ -2387,27 +2382,6 @@ export default function Storefront() {
                 <span className="pdetail-cat">{detailProduct.catLabel}</span>
                 <h2>{detailProduct.name}</h2>
                 <div className="pdetail-price">₹{detailProduct.price.toLocaleString('en-IN')}</div>
-                {detailProduct.isLimited && (
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '0.6rem',
-                    fontWeight: 700,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    fontFamily: 'var(--body)',
-                    padding: '4px 10px',
-                    borderRadius: '5px',
-                    background: detailProduct.stock === 0 ? 'rgba(30,10,10,0.92)' : 'rgba(225,6,0,0.1)',
-                    border: detailProduct.stock === 0 ? '1px solid rgba(225,6,0,0.35)' : '1px solid var(--red)',
-                    color: 'var(--red)',
-                    marginBottom: '6px',
-                  }}>
-                    <span style={{ display: 'inline-block', width: '5px', height: '5px', borderRadius: '50%', background: 'var(--red)', animation: detailProduct.stock === 0 ? 'none' : 'dotPulse 1.6s ease-in-out infinite' }} />
-                    {detailProduct.stock === 0 ? 'SOLD OUT — ARCHIVED' : `LIMITED DROP — ${detailProduct.stock} LEFT`}
-                  </div>
-                )}
                 <p className="pdetail-desc">{detailProduct.desc}</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
                   <span className="foot-label">Select Size</span>
@@ -2419,21 +2393,14 @@ export default function Storefront() {
                     ))}
                   </div>
                 </div>
-                <button
-                  className="pdetail-add-btn"
-                  type="button"
-                  disabled={detailProduct.stock === 0}
-                  style={detailProduct.stock === 0 ? { opacity: 0.38, cursor: 'not-allowed', filter: 'grayscale(1)' } : {}}
-                  onClick={() => {
-                    if (detailProduct.stock === 0) return;
-                    addToCart(detailProduct, detailSize);
-                    setDetailProduct(null);
-                    setCheckoutStep('cart');
-                    setCartOpen(true);
-                  }}
-                >
+                <button className="pdetail-add-btn" type="button" onClick={() => {
+                  addToCart(detailProduct, detailSize);
+                  setDetailProduct(null);
+                  setCheckoutStep('cart');
+                  setCartOpen(true);
+                }}>
                   <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                  {detailProduct.stock === 0 ? 'Archived — No Restock' : 'Add to Cart'}
+                  Add to Cart
                 </button>
 
                 {/* HANDPICKED SUBTEXT */}

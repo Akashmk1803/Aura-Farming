@@ -10,6 +10,7 @@ export const products = sqliteTable('products', {
   artSvgKey: text('art_svg_key').notNull(),
   stock: integer('stock').default(50).notNull(),
   isLimited: integer('is_limited', { mode: 'boolean' }).default(false).notNull(),
+  isCustomizable: integer('is_customizable', { mode: 'boolean' }).default(false).notNull(),
 });
 
 // Better Auth Tables

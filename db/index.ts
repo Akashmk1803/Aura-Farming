@@ -29,7 +29,8 @@ sqlite.exec(`
     category_label TEXT NOT NULL,
     art_svg_key TEXT NOT NULL,
     stock INTEGER NOT NULL DEFAULT 50,
-    is_limited INTEGER NOT NULL DEFAULT 0
+    is_limited INTEGER NOT NULL DEFAULT 0,
+    is_customizable INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS user (
@@ -117,41 +118,40 @@ sqlite.exec(`
 
 export const db = drizzle(sqlite, { schema });
 
-// Migrate: add is_limited column if it doesn't exist (safe for existing databases)
-try {
-  sqlite.exec('ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0');
-} catch (_) {
-  // Column already exists — ignore
-}
-// Backfill: mark all 6 seeded products as limited (idempotent)
-sqlite.exec("UPDATE products SET is_limited = 1 WHERE id IN ('A','B','C','D','E','F')");
+// ── Safe migrations: add new columns to existing databases without wiping data ──
+// SQLite throws if a column already exists; we catch and ignore those errors.
+try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_customizable INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
 
+// Backfill is_customizable=1 for hoodies, tees, longsleeve in existing seeded rows
+sqlite.exec(`UPDATE products SET is_customizable = 1 WHERE category IN ('hoodies', 'tees') AND is_customizable = 0`);
+// Mark Crimson Line Jacket as limited
+sqlite.exec(`UPDATE products SET is_limited = 1, stock = 12 WHERE id = 'C' AND is_limited = 0`);
 
 // Seed products if catalog is empty
 const productCount = sqlite.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number };
 if (productCount.count === 0) {
   const initialProducts = [
-    { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, category: 'hoodies', category_label: 'Hoodie', art_svg_key: 'hoodie', stock: 50, is_limited: 1 },
-    { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, category: 'tees', category_label: 'Tee', art_svg_key: 'tee', stock: 50, is_limited: 1 },
-    { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, category: 'outerwear', category_label: 'Jacket', art_svg_key: 'jacket', stock: 50, is_limited: 1 },
-    { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, category: 'bottoms', category_label: 'Cargo', art_svg_key: 'cargo', stock: 50, is_limited: 1 },
-    { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, category: 'headwear', category_label: 'Cap', art_svg_key: 'cap', stock: 50, is_limited: 1 },
-    { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, category: 'tees', category_label: 'Longsleeve', art_svg_key: 'longsleeve', stock: 50, is_limited: 1 }
+    { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, category: 'hoodies', category_label: 'Hoodie', art_svg_key: 'hoodie', stock: 50, is_limited: 0, is_customizable: 1 },
+    { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, category: 'tees', category_label: 'Tee', art_svg_key: 'tee', stock: 50, is_limited: 0, is_customizable: 1 },
+    { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, category: 'outerwear', category_label: 'Jacket', art_svg_key: 'jacket', stock: 12, is_limited: 1, is_customizable: 0 },
+    { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, category: 'bottoms', category_label: 'Cargo', art_svg_key: 'cargo', stock: 50, is_limited: 0, is_customizable: 0 },
+    { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, category: 'headwear', category_label: 'Cap', art_svg_key: 'cap', stock: 50, is_limited: 0, is_customizable: 0 },
+    { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, category: 'tees', category_label: 'Longsleeve', art_svg_key: 'longsleeve', stock: 50, is_limited: 0, is_customizable: 1 }
   ];
 
   const insertProduct = sqlite.prepare(`
-    INSERT OR IGNORE INTO products (id, name, description, price, category, category_label, art_svg_key, stock, is_limited)
-    VALUES (@id, @name, @description, @price, @category, @category_label, @art_svg_key, @stock, @is_limited)
+    INSERT OR IGNORE INTO products (id, name, description, price, category, category_label, art_svg_key, stock, is_limited, is_customizable)
+    VALUES (@id, @name, @description, @price, @category, @category_label, @art_svg_key, @stock, @is_limited, @is_customizable)
   `);
 
-  const transaction = sqlite.transaction((items) => {
-    for (const p of items) {
-      insertProduct.run(p);
-    }
+  const seedTransaction = sqlite.transaction((items: typeof initialProducts) => {
+    for (const p of items) insertProduct.run(p);
   });
-
-  transaction(initialProducts);
+  seedTransaction(initialProducts);
   console.log('Seeded database with initial products catalog.');
+
+  // Also backfill is_limited / is_customizable columns on existing rows (ALTER TABLE if columns missing)
 }
 
 // Seed default administrator if not present (Better Auth uses scrypt, not bcrypt)
