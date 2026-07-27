@@ -95,6 +95,7 @@ export const wishlist = sqliteTable('wishlist', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: text('user_id').notNull().references(() => user.id),
   productId: text('product_id').notNull().references(() => products.id),
+  size: text('size').default('M').notNull(),
   createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
 });
 

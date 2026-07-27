@@ -39,6 +39,7 @@ interface Product {
   stock: number;
   isLimited: boolean;
   isCustomizable: boolean;
+  size?: string;
 }
 
 interface CartItem {
@@ -1051,7 +1052,7 @@ export default function Storefront() {
     }
   };
 
-  const toggleWishlist = async (productId: string) => {
+  const toggleWishlist = async (productId: string, size?: string) => {
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -1062,7 +1063,7 @@ export default function Storefront() {
       const res = await fetch('/api/wishlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId })
+        body: JSON.stringify({ productId, size: size || 'M' })
       });
       if (res.ok) {
         const data = await res.json();
@@ -2072,7 +2073,7 @@ export default function Storefront() {
             <span>{user ? user.name.split(' ')[0] : 'Login'}</span>
           </button>
 
-          <button className="icon-btn wishlist-btn" onClick={() => setWishlistOpen(true)} aria-label="Open wishlist" style={{ position: 'relative' }}>
+          <button className="icon-btn wishlist-btn" onClick={() => { setCartOpen(false); setAuthOpen(false); setAdminOpen(false); setTrackingOpen(false); setDetailProduct(null); setWishlistOpen(true); }} aria-label="Open wishlist" style={{ position: 'relative' }}>
             <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', fill: wishlistItems.length > 0 ? 'var(--red)' : 'none', stroke: wishlistItems.length > 0 ? 'var(--red)' : 'currentColor', strokeWidth: 2 }}>
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
@@ -3771,14 +3772,14 @@ export default function Storefront() {
               {wishlistItems.map(item => (
                 <div key={item.id} style={{ display: 'flex', gap: '14px', background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '12px', padding: '12px 16px', alignItems: 'center' }}>
                   {/* Miniature Spin Garment SVG icon */}
-                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0 }}>
+                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0, cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setWishlistOpen(false); }}>
                     <div style={{ width: '36px', height: '36px', transform: 'scale(0.85)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
                   </div>
                   
                   {/* Name and Price */}
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setWishlistOpen(false); }}>
                     <span style={{ fontSize: '0.8rem', color: 'var(--bone)', fontWeight: 500 }}>{item.name}</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')}</span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')} {item.size && <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginLeft: '4px' }}>| Size: {item.size}</span>}</span>
                   </div>
                   
                   {/* Action Buttons (Add to Cart, Delete) */}
@@ -3786,7 +3787,7 @@ export default function Storefront() {
                     <button
                       className="foot-chip"
                       onClick={() => {
-                        addToCart(item, 'M');
+                        addToCart(item, item.size || (item.cat === 'headwear' ? 'OS' : 'M'));
                       }}
                       style={{ height: '26px', padding: '0 10px', fontSize: '0.6rem' }}
                     >
@@ -3876,7 +3877,7 @@ export default function Storefront() {
                 {/* SAVE TO WISHLIST BUTTON */}
                 <button
                   type="button"
-                  onClick={() => toggleWishlist(detailProduct.id)}
+                  onClick={() => toggleWishlist(detailProduct.id, detailSize)}
                   style={{
                     marginTop: '12px',
                     width: '100%',

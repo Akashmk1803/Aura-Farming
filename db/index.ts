@@ -134,6 +134,7 @@ try { sqlite.exec(`ALTER TABLE orders ADD COLUMN convenience_fee INTEGER NOT NUL
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN platform_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN cod_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE wishlist ADD COLUMN size TEXT NOT NULL DEFAULT 'M'`); } catch (_) {}
 // Create addresses table if not exists
 try {
   sqlite.exec(`

@@ -24,7 +24,8 @@ export async function GET(req: NextRequest) {
       cat: products.category,
       catLabel: products.categoryLabel,
       art: products.artSvgKey,
-      stock: products.stock
+      stock: products.stock,
+      size: wishlist.size
     })
     .from(wishlist)
     .innerJoin(products, eq(wishlist.productId, products.id))
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     }
     const userId = session.user.id;
 
-    const { productId } = await req.json();
+    const { productId, size = 'M' } = await req.json();
     if (!productId) {
       return NextResponse.json({ error: 'Missing product ID' }, { status: 400 });
     }
@@ -70,7 +71,8 @@ export async function POST(req: NextRequest) {
       await db.insert(wishlist)
         .values({
           userId,
-          productId
+          productId,
+          size
         })
         .run();
       return NextResponse.json({ active: true, message: 'Added to wishlist' });
