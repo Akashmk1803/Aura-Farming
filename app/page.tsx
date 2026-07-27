@@ -875,6 +875,7 @@ export default function Storefront() {
   // Details Modal states
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [detailSize, setDetailSize] = useState('M');
+  const [detailOpenedFromWishlist, setDetailOpenedFromWishlist] = useState(false);
 
   // Checkout Wizard states
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
@@ -2032,6 +2033,7 @@ export default function Storefront() {
                                 addToSearchHistory(searchQuery || item.name);
                                 setDetailProduct(item);
                                 setDetailSize(item.cat === 'headwear' ? 'OS' : 'M');
+                                setDetailOpenedFromWishlist(false);
                                 setSearchOpen(false);
                               }}
                               style={{
@@ -2171,7 +2173,7 @@ export default function Storefront() {
             const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL'];
             return (
               <article key={p.id} className="card reveal in" data-cat={p.cat} data-pid={p.id}>
-                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
+                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); setDetailOpenedFromWishlist(false); }}>
                   <span className="tag">001 / {p.id}</span>
                   <span className="cat-tag">{p.catLabel}</span>
                   <div className="fig">
@@ -2182,7 +2184,7 @@ export default function Storefront() {
                   </div>
                 </div>
                 <div className="card-body">
-                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
+                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); setDetailOpenedFromWishlist(false); }}>
                     <div className="meta">
                       <h3>{p.name}</h3>
                       <div className="desc">{p.desc}</div>
@@ -3772,12 +3774,12 @@ export default function Storefront() {
               {wishlistItems.map(item => (
                 <div key={item.id} style={{ display: 'flex', gap: '14px', background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '12px', padding: '12px 16px', alignItems: 'center' }}>
                   {/* Miniature Spin Garment SVG icon */}
-                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0, cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setWishlistOpen(false); }}>
+                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0, cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setDetailOpenedFromWishlist(true); setWishlistOpen(false); }}>
                     <div style={{ width: '36px', height: '36px', transform: 'scale(0.85)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
                   </div>
                   
                   {/* Name and Price */}
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setWishlistOpen(false); }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setDetailOpenedFromWishlist(true); setWishlistOpen(false); }}>
                     <span style={{ fontSize: '0.8rem', color: 'var(--bone)', fontWeight: 500 }}>{item.name}</span>
                     <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')} {item.size && <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginLeft: '4px' }}>| Size: {item.size}</span>}</span>
                   </div>
@@ -3844,7 +3846,16 @@ export default function Storefront() {
                   <span className="foot-label">Select Size</span>
                   <div className="pdetail-sizes">
                     {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL']).map(s => (
-                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => setDetailSize(s)}>
+                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => {
+                        setDetailSize(s);
+                        if (detailOpenedFromWishlist) {
+                          fetch('/api/wishlist', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ productId: detailProduct.id, size: s })
+                          }).then(() => fetchWishlist());
+                        }
+                      }}>
                         {s}
                       </button>
                     ))}

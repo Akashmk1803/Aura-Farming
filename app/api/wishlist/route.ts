@@ -82,3 +82,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
+export async function PUT(req: NextRequest) {
+  try {
+    const session = await auth.api.getSession({
+      headers: await headers()
+    });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const userId = session.user.id;
+
+    const { productId, size } = await req.json();
+    if (!productId || !size) {
+      return NextResponse.json({ error: 'Missing product ID or size' }, { status: 400 });
+    }
+
+    await db.update(wishlist)
+      .set({ size })
+      .where(and(eq(wishlist.userId, userId), eq(wishlist.productId, productId)))
+      .run();
+      
+    return NextResponse.json({ message: 'Wishlist size updated' });
+  } catch (error) {
+    console.error('Error updating wishlist size:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
