@@ -83,16 +83,49 @@ interface Address {
 }
 
 // ─── Shared card visualizer (used by both mock and real forms) ───────────────
-function CardVisualizer({ cardHolder, cardFlipped, cardBrand }: { cardHolder: string; cardFlipped: boolean; cardBrand: string }) {
+function CardVisualizer({
+  cardHolder,
+  cardFlipped,
+  cardBrand,
+  cardNumber = '•••• •••• •••• ••••',
+  cardExpiry = 'MM/YY',
+  cardCvc = '•••',
+  onFlipToggle
+}: {
+  cardHolder: string;
+  cardFlipped: boolean;
+  cardBrand: string;
+  cardNumber?: string;
+  cardExpiry?: string;
+  cardCvc?: string;
+  onFlipToggle?: () => void;
+}) {
   return (
     <div style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
       <div style={{ width: '100%', height: '100%', position: 'relative', transformStyle: 'preserve-3d', transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)', transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
+        {/* Front Face */}
         <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }} />
-            <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
+              {onFlipToggle && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFlipToggle(); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--dim2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                  title="Flip Card"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
-          <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', color: 'var(--bone)' }}>•••• •••• •••• ••••</div>
+          <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', color: 'var(--bone)' }}>
+            {cardNumber}
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
             <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
               <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
@@ -100,17 +133,35 @@ function CardVisualizer({ cardHolder, cardFlipped, cardBrand }: { cardHolder: st
             </div>
             <div style={{ flex: '0 0 auto' }}>
               <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>MM/YY</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>{cardExpiry}</div>
             </div>
           </div>
         </div>
+
+        {/* Back Face */}
         <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
           <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }} />
           <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
             <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
-            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700 }}>•••</div>
+            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifycontent: 'center', padding: '0 8px', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.1em' }}>
+              {cardCvc}
+            </div>
           </div>
-          <div style={{ padding: '0 20px', fontSize: '0.55rem', color: 'var(--dim2)', textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
+          <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+            <div style={{ fontSize: '0.55rem', color: 'var(--dim2)', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
+            {onFlipToggle && (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFlipToggle(); }}
+                style={{ background: 'none', border: 'none', color: 'var(--dim2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                title="Flip Card"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -122,6 +173,30 @@ function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: nu
   const [loading, setLoading] = useState(false);
   const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
   const [cardFlipped, setCardFlipped] = useState(false);
+  const [cardNumber, setCardNumber] = useState('4242 4242 4242 4242');
+  const [expiry, setExpiry] = useState('12/28');
+  const [cvc, setCvc] = useState('123');
+  const [showCvvTooltip, setShowCvvTooltip] = useState(false);
+
+  const handleCardNumberChange = (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 16);
+    const formatted = clean.match(/.{1,4}/g)?.join(' ') || '';
+    setCardNumber(formatted);
+  };
+
+  const handleExpiryChange = (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 4);
+    let formatted = clean;
+    if (clean.length > 2) {
+      formatted = `${clean.slice(0, 2)}/${clean.slice(2)}`;
+    }
+    setExpiry(formatted);
+  };
+
+  const handleCvcChange = (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 4);
+    setCvc(clean);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -135,34 +210,97 @@ function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: nu
       <div style={{ background: 'rgba(225,6,0,0.07)', border: '1px solid rgba(225,6,0,0.25)', borderRadius: '10px', padding: '8px 14px', fontSize: '0.7rem', color: 'var(--red)', letterSpacing: '0.04em' }}>
         ⚡ Demo mode — no real payment is processed
       </div>
-      <CardVisualizer cardHolder={cardHolder} cardFlipped={cardFlipped} cardBrand="DEMO" />
+      <CardVisualizer
+        cardHolder={cardHolder}
+        cardFlipped={cardFlipped}
+        cardBrand="DEMO"
+        cardNumber={cardNumber}
+        cardExpiry={expiry}
+        cardCvc={cvc}
+        onFlipToggle={() => setCardFlipped(!cardFlipped)}
+      />
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Card Number</label>
           <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            <input type="text" defaultValue="4242 4242 4242 4242" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+            <input
+              type="text"
+              value={cardNumber}
+              onChange={e => handleCardNumberChange(e.target.value)}
+              maxLength={19}
+              required
+              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+            />
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Cardholder Name</label>
           <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input type="text" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }} />
+            <input
+              type="text"
+              placeholder="Name on Card"
+              value={cardHolder}
+              onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
+              required
+              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+            />
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">Expiry Date</label>
             <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <input type="text" defaultValue="12/28" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+              <input
+                type="text"
+                placeholder="MM/YY"
+                value={expiry}
+                onChange={e => handleExpiryChange(e.target.value)}
+                maxLength={5}
+                required
+                style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+              />
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">CVV / Code</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+              <label className="foot-label">CVV / Code</label>
+              <span
+                onClick={() => setShowCvvTooltip(!showCvvTooltip)}
+                onMouseEnter={() => setShowCvvTooltip(true)}
+                onMouseLeave={() => setShowCvvTooltip(false)}
+                style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
+              >
+                What's This?
+              </span>
+              {showCvvTooltip && (
+                <div style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
+                  background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
+                  padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
+                  lineHeight: 1.3, fontFamily: 'var(--body)'
+                }}>
+                  3-digit security code on the back of your card
+                </div>
+              )}
+            </div>
             <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <input type="password" defaultValue="123" onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)} style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+              <input
+                type="password"
+                value={cvc}
+                onChange={e => handleCvcChange(e.target.value)}
+                onFocus={() => setCardFlipped(true)}
+                onBlur={() => setCardFlipped(false)}
+                maxLength={4}
+                required
+                style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+              />
             </div>
           </div>
         </div>
+      </div>
+      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
+        By placing this order, you agree to Aura Farming's T&amp;C
       </div>
       <button className="checkout" type="submit" disabled={loading}>
         {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
@@ -183,8 +321,10 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
   const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
   const [cardFlipped, setCardFlipped] = useState(false);
   const [cardBrand, setCardBrand] = useState('AURA CARD');
+  const [showCvvTooltip, setShowCvvTooltip] = useState(false);
 
   const stripeElementStyle = { style: { base: { color: '#ece8e1', fontFamily: '"Inter Tight", sans-serif', fontSize: '14px', lineHeight: '24px', '::placeholder': { color: '#65625e' } }, invalid: { color: '#e10600' } } };
+  const expiryElementOptions = { ...stripeElementStyle, placeholder: 'MM/YY' };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,7 +350,12 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
 
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <CardVisualizer cardHolder={cardHolder} cardFlipped={cardFlipped} cardBrand={cardBrand} />
+      <CardVisualizer
+        cardHolder={cardHolder}
+        cardFlipped={cardFlipped}
+        cardBrand={cardBrand}
+        onFlipToggle={() => setCardFlipped(!cardFlipped)}
+      />
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Card Number</label>
@@ -221,18 +366,39 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Cardholder Name</label>
           <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input type="text" placeholder="Akash" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }} />
+            <input type="text" placeholder="Name on Card" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }} />
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">Expiry Date</label>
             <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardExpiryElement options={stripeElementStyle} />
+              <CardExpiryElement options={expiryElementOptions} />
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">CVV / Code</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+              <label className="foot-label">CVV / Code</label>
+              <span
+                onClick={() => setShowCvvTooltip(!showCvvTooltip)}
+                onMouseEnter={() => setShowCvvTooltip(true)}
+                onMouseLeave={() => setShowCvvTooltip(false)}
+                style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
+              >
+                What's This?
+              </span>
+              {showCvvTooltip && (
+                <div style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
+                  background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
+                  padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
+                  lineHeight: 1.3, fontFamily: 'var(--body)'
+                }}>
+                  3-digit security code on the back of your card
+                </div>
+              )}
+            </div>
             <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
               <CardCvcElement options={stripeElementStyle} onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)} />
             </div>
@@ -240,6 +406,9 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
         </div>
       </div>
       {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
+      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
+        By placing this order, you agree to Aura Farming's T&amp;C
+      </div>
       <button className="checkout" id="submitPaymentBtn" type="submit" disabled={loading || !stripe}>
         {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
       </button>
