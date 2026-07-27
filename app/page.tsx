@@ -59,75 +59,125 @@ interface Order {
   items: OrderItem[];
 }
 
-interface PaymentFormProps {
-  clientSecret: string;
-  orderId: string;
-  total: number;
-  shippingName: string;
-  isMock?: boolean;
-  onSuccess: () => void;
-  onBack: () => void;
+// ─── Shared card visualizer (used by both mock and real forms) ───────────────
+function CardVisualizer({ cardHolder, cardFlipped, cardBrand }: { cardHolder: string; cardFlipped: boolean; cardBrand: string }) {
+  return (
+    <div style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', transformStyle: 'preserve-3d', transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)', transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
+        <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }} />
+            <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', color: 'var(--bone)' }}>•••• •••• •••• ••••</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
+              <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
+              <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardHolder}</div>
+            </div>
+            <div style={{ flex: '0 0 auto' }}>
+              <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>MM/YY</div>
+            </div>
+          </div>
+        </div>
+        <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+          <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }} />
+          <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
+            <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
+            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700 }}>•••</div>
+          </div>
+          <div style={{ padding: '0 20px', fontSize: '0.55rem', color: 'var(--dim2)', textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock, onSuccess, onBack }: PaymentFormProps) {
-  const stripe = useStripe();
-  const elements = useElements();
+// ─── MOCK payment form — NO Stripe hooks, plain HTML inputs ──────────────────
+function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: number; shippingName: string; onSuccess: () => void; onBack: () => void }) {
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  
   const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
   const [cardFlipped, setCardFlipped] = useState(false);
-  const [cardBrand, setCardBrand] = useState('AURA CARD');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setErrorMessage('');
+    await new Promise(r => setTimeout(r, 800));
+    onSuccess();
+  };
 
-    if (isMock) {
-      await new Promise(r => setTimeout(r, 700));
-      onSuccess();
-      return;
-    }
+  return (
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div style={{ background: 'rgba(225,6,0,0.07)', border: '1px solid rgba(225,6,0,0.25)', borderRadius: '10px', padding: '8px 14px', fontSize: '0.7rem', color: 'var(--red)', letterSpacing: '0.04em' }}>
+        ⚡ Demo mode — no real payment is processed
+      </div>
+      <CardVisualizer cardHolder={cardHolder} cardFlipped={cardFlipped} cardBrand="DEMO" />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label className="foot-label">Card Number</label>
+          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+            <input type="text" defaultValue="4242 4242 4242 4242" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label className="foot-label">Cardholder Name</label>
+          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
+            <input type="text" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }} />
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label className="foot-label">Expiry Date</label>
+            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <input type="text" defaultValue="12/28" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label className="foot-label">CVV / Code</label>
+            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <input type="password" defaultValue="123" onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)} style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
+            </div>
+          </div>
+        </div>
+      </div>
+      <button className="checkout" type="submit" disabled={loading}>
+        {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
+      </button>
+      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
+        ← Back to Shipping
+      </button>
+    </form>
+  );
+}
 
+// ─── REAL Stripe form — must be rendered inside <Elements> provider ───────────
+function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess, onBack }: { clientSecret: string; orderId: string; total: number; shippingName: string; onSuccess: () => void; onBack: () => void }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
+  const [cardFlipped, setCardFlipped] = useState(false);
+  const [cardBrand, setCardBrand] = useState('AURA CARD');
+
+  const stripeElementStyle = { style: { base: { color: '#ece8e1', fontFamily: '"Inter Tight", sans-serif', fontSize: '14px', lineHeight: '24px', '::placeholder': { color: '#65625e' } }, invalid: { color: '#e10600' } } };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!stripe || !elements) return;
-
+    setLoading(true);
+    setErrorMessage('');
     const cardNumberElement = elements.getElement(CardNumberElement);
     if (!cardNumberElement) return;
-
-    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
-      payment_method: {
-        card: cardNumberElement,
-        billing_details: {
-          name: shippingName,
-        },
-      },
-    });
-
+    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: cardNumberElement, billing_details: { name: shippingName } } });
     if (error) {
-      console.error('[Payment Error]', error);
       setErrorMessage(error.message || 'Payment initiation failed.');
       setLoading(false);
     } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-      // simulated webhook trigger fallback for immediate local validation
       try {
-        await fetch('/api/webhooks/stripe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'payment_intent.succeeded',
-            data: {
-              object: {
-                id: paymentIntent.id,
-                metadata: { orderId: orderId }
-              }
-            }
-          })
-        });
-      } catch (err) {
-        console.error('Simulated webhook trigger warning:', err);
-      }
-
+        await fetch('/api/webhooks/stripe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'payment_intent.succeeded', data: { object: { id: paymentIntent.id, metadata: { orderId } } } }) });
+      } catch (err) { console.error('Webhook trigger warning:', err); }
       onSuccess();
     } else {
       setErrorMessage('Unexpected transaction status.');
@@ -135,144 +185,43 @@ function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock,
     }
   };
 
-  const handleCardNumChange = (event: any) => {
-    if (event.brand) {
-      setCardBrand(event.brand.toUpperCase());
-    }
-  };
-
-  const stripeElementStyle = {
-    style: {
-      base: {
-        color: '#ece8e1',
-        fontFamily: '"Inter Tight", sans-serif',
-        fontSize: '14px',
-        lineHeight: '24px',
-        '::placeholder': {
-          color: '#65625e',
-        },
-      },
-      invalid: {
-        color: '#e10600',
-      },
-    },
-  };
-
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      {/* 3D Card Visualizer */}
-      <div className="card-wrapper" style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
-        <div style={{
-          width: '100%',
-          height: '100%',
-          position: 'relative',
-          transformStyle: 'preserve-3d',
-          transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-          transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
-        }}>
-          
-          {/* Card Front */}
-          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }}></div>
-              <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
-            </div>
-            <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', wordSpacing: '0.1em', color: 'var(--bone)' }}>•••• •••• •••• ••••</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-              <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
-                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
-                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardHolder}</div>
-              </div>
-              <div style={{ flex: '0 0 auto' }}>
-                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>MM/YY</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Card Back */}
-          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }}></div>
-            <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
-                <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
-                <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.05em' }}>•••</div>
-              </div>
-            </div>
-            <div style={{ padding: '0 20px', fontSize: '0.55rem', color: 'var(--dim2)', textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Card Inputs */}
+      <CardVisualizer cardHolder={cardHolder} cardFlipped={cardFlipped} cardBrand={cardBrand} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Card Number</label>
-          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            {isMock ? (
-              <input type="text" defaultValue="4242 4242 4242 4242" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
-            ) : (
-              <CardNumberElement options={stripeElementStyle} onChange={handleCardNumChange} />
-            )}
+          <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+            <CardNumberElement options={stripeElementStyle} onChange={e => { if (e.brand) setCardBrand(e.brand.toUpperCase()); }} />
           </div>
         </div>
-
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label className="foot-label">Cardholder Name</label>
-          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input
-              type="text"
-              placeholder="Akash"
-              value={cardHolder}
-              onChange={(e) => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
-              required
-              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }}
-            />
+          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
+            <input type="text" placeholder="Akash" value={cardHolder} onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')} required style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }} />
           </div>
         </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">Expiry Date</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              {isMock ? (
-                <input type="text" defaultValue="12/28" style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }} />
-              ) : (
-                <CardExpiryElement options={stripeElementStyle} />
-              )}
+            <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <CardExpiryElement options={stripeElementStyle} />
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label className="foot-label">CVV / Code</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: isMock ? '0' : '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              {isMock ? (
-                <input
-                  type="password"
-                  defaultValue="123"
-                  onFocus={() => setCardFlipped(true)}
-                  onBlur={() => setCardFlipped(false)}
-                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%' }}
-                />
-              ) : (
-                <CardCvcElement
-                  options={stripeElementStyle}
-                  onFocus={() => setCardFlipped(true)}
-                  onBlur={() => setCardFlipped(false)}
-                />
-              )}
+            <div className="notify-box" style={{ borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <CardCvcElement options={stripeElementStyle} onFocus={() => setCardFlipped(true)} onBlur={() => setCardFlipped(false)} />
             </div>
           </div>
         </div>
       </div>
-
       {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
-
       <button className="checkout" id="submitPaymentBtn" type="submit" disabled={loading || !stripe}>
         {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
       </button>
-      
       <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        &larr; Back to Shipping
+        ← Back to Shipping
       </button>
     </form>
   );
@@ -1650,12 +1599,9 @@ export default function Storefront() {
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
               {isMockPayment ? (
-                <StripePaymentForm
-                  clientSecret={clientSecret}
-                  orderId={checkoutOrderId}
+                <MockPaymentForm
                   total={checkoutTotal}
                   shippingName={checkoutName}
-                  isMock={isMockPayment}
                   onBack={() => setCheckoutStep('shipping')}
                   onSuccess={() => {
                     setCart([]);
@@ -1670,12 +1616,11 @@ export default function Storefront() {
                 />
               ) : (
                 <Elements stripe={stripePromise} options={{ clientSecret }}>
-                  <StripePaymentForm
+                  <RealStripeForm
                     clientSecret={clientSecret}
                     orderId={checkoutOrderId}
                     total={checkoutTotal}
                     shippingName={checkoutName}
-                    isMock={isMockPayment}
                     onBack={() => setCheckoutStep('shipping')}
                     onSuccess={() => {
                       setCart([]);
