@@ -292,9 +292,22 @@ export default function Storefront() {
 
   // Checkout Wizard states
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
-  const [checkoutName, setCheckoutName] = useState('');
+  // Shipping form fields
+  const [checkoutName, setCheckoutName]       = useState('');
+  const [checkoutMobile, setCheckoutMobile]   = useState('');
+  const [checkoutPhone, setCheckoutPhone]     = useState('');  // WhatsApp (defaults to mobile)
+  const [checkoutPin, setCheckoutPin]         = useState('');
+  const [checkoutLocality, setCheckoutLocality] = useState('');
+  const [checkoutFlat, setCheckoutFlat]       = useState('');
+  const [checkoutLandmark, setCheckoutLandmark] = useState('');
+  const [checkoutCity, setCheckoutCity]       = useState('');
+  const [checkoutState, setCheckoutState]     = useState('');
+  const [checkoutAddressType, setCheckoutAddressType] = useState<'Home' | 'Work' | 'Others'>('Home');
+  // Inline validation errors
+  const [mobileError, setMobileError]         = useState('');
+  const [formErrors, setFormErrors]           = useState<Record<string, string>>({});
+  // Legacy: keep checkoutAddress for the order payload build (assembled on submit)
   const [checkoutAddress, setCheckoutAddress] = useState('');
-  const [checkoutPhone, setCheckoutPhone] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
@@ -612,14 +625,49 @@ export default function Storefront() {
     fetchAdminStats();
   };
 
-  // Shipping form submit → go to payment method selection
+  // Shipping form submit → validate all fields, build address string, go to payment-method
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkoutName || !checkoutAddress || !checkoutPhone) {
-      fly('Recipient name, address, and phone number are required.');
+    const errors: Record<string, string> = {};
+    if (!checkoutName.trim())     errors.name     = 'Name is required.';
+    if (!checkoutMobile.trim() || !/^[0-9]{10}$/.test(checkoutMobile.trim()))
+      errors.mobile = 'Please enter a valid 10 digit mobile number.';
+    if (!checkoutPin.trim() || !/^[0-9]{6}$/.test(checkoutPin.trim()))
+      errors.pin = 'Please enter a valid 6 digit pin code.';
+    if (!checkoutLocality.trim()) errors.locality  = 'Locality / Area / Street is required.';
+    if (!checkoutFlat.trim())     errors.flat      = 'Flat number / Building Name is required.';
+    if (!checkoutLandmark.trim()) errors.landmark  = 'Landmark is required.';
+    if (!checkoutCity.trim())     errors.city      = 'District / City is required.';
+    if (!checkoutState.trim())    errors.state     = 'State is required.';
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      fly('Please fix the highlighted errors.');
       return;
     }
+    setFormErrors({});
+    setMobileError('');
+    // Build formatted address string for storage / display
+    const formatted = `${checkoutFlat}, ${checkoutLocality}, ${checkoutLandmark}, ${checkoutCity}, ${checkoutState} - ${checkoutPin} [${checkoutAddressType}]`;
+    setCheckoutAddress(formatted);
+    // WhatsApp defaults to mobile if left blank
+    if (!checkoutPhone.trim()) setCheckoutPhone(checkoutMobile.trim());
     setCheckoutStep('payment-method');
+  };
+
+  // Reset all shipping form fields
+  const handleShippingReset = () => {
+    setCheckoutName('');
+    setCheckoutMobile('');
+    setCheckoutPhone('');
+    setCheckoutPin('');
+    setCheckoutLocality('');
+    setCheckoutFlat('');
+    setCheckoutLandmark('');
+    setCheckoutCity('');
+    setCheckoutState('');
+    setCheckoutAddressType('Home');
+    setMobileError('');
+    setFormErrors({});
   };
 
   // Called after payment method is confirmed — creates order and routes appropriately
@@ -629,7 +677,7 @@ export default function Storefront() {
       const payload = {
         shipping_name: checkoutName,
         shipping_address: checkoutAddress,
-        phone: checkoutPhone,
+        phone: checkoutPhone || checkoutMobile,
         payment_method: method,
         items: cart.map(item => ({
           productId: item.pid,
@@ -1781,50 +1829,169 @@ export default function Storefront() {
         ) : checkoutStep === 'shipping' ? (
           <>
             <div className="cart-head">
-              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Shipping</h3>
+              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Add Address</h3>
               <button className="cart-close" onClick={() => setCheckoutStep('cart')}>&larr;</button>
             </div>
-            <form onSubmit={handleCheckoutSubmit} className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px 24px', overflowY: 'auto' }}>
-              <p style={{ color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>
+            <form
+              onSubmit={handleCheckoutSubmit}
+              noValidate
+              className="cart-items"
+              style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px 24px', overflowY: 'auto' }}
+            >
+              {/* Common input style applied via CSS var so every input is exactly the same width */}
+              <style>{`
+                .addr-field { display:flex; flex-direction:column; gap:6px; width:100%; }
+                .addr-field .notify-box { width:100%; max-width:100%; border-radius:12px; box-sizing:border-box; }
+                .addr-field input, .addr-field select {
+                  width:100%; box-sizing:border-box;
+                  padding:10px 14px; background:transparent; border:none;
+                  color:var(--bone); font-family:var(--body); font-size:0.85rem; outline:none;
+                }
+                .addr-field .prefix-row { display:flex; align-items:center; }
+                .addr-field .prefix-row .pfx { padding:10px 6px 10px 14px; color:var(--dim); font-size:0.85rem; white-space:nowrap; flex-shrink:0; }
+                .addr-field .prefix-row input { padding:10px 14px 10px 0; }
+                .addr-err { font-size:0.68rem; color:#ff6a5e; margin-top:2px; }
+                .addr-caption { font-size:0.65rem; color:var(--dim2); font-style:italic; }
+              `}</style>
+
+              <p style={{ color: 'var(--dim)', fontSize: '0.8rem', fontFamily: 'var(--serif)', fontStyle: 'italic', margin: 0 }}>
                 Confirm shipping coordinates for the transaction.
               </p>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Recipient Name</label>
-                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
-                  <input type="text" value={checkoutName} onChange={(e) => setCheckoutName(e.target.value)} placeholder="Akash" required style={{ padding: '10px 14px' }} />
+
+              {/* 1. Name */}
+              <div className="addr-field">
+                <label className="foot-label">Name *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutName} onChange={e => setCheckoutName(e.target.value)} placeholder="Full name" required />
                 </div>
+                {formErrors.name && <span className="addr-err">{formErrors.name}</span>}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Coordinates Address</label>
-                <textarea
-                  value={checkoutAddress}
-                  onChange={(e) => setCheckoutAddress(e.target.value)}
-                  placeholder="Enter your full shipping address..."
-                  required
-                  style={{ background: 'var(--ink)', border: '1px solid var(--hair2)', borderRadius: '12px', color: 'var(--bone)', padding: '12px', fontFamily: 'var(--body)', fontSize: '0.85rem', height: '80px', resize: 'none', outline: 'none' }}
-                />
+              {/* 2. Mobile */}
+              <div className="addr-field">
+                <label className="foot-label">Mobile *</label>
+                <div className="notify-box prefix-row">
+                  <span className="pfx">+91</span>
+                  <input
+                    type="tel"
+                    value={checkoutMobile}
+                    onChange={e => { setCheckoutMobile(e.target.value); if (mobileError) setMobileError(''); }}
+                    onBlur={() => {
+                      if (checkoutMobile && !/^[0-9]{10}$/.test(checkoutMobile.trim()))
+                        setMobileError('Please enter a valid 10 digit mobile number.');
+                    }}
+                    placeholder="9876543210"
+                    maxLength={10}
+                    required
+                  />
+                </div>
+                {(mobileError || formErrors.mobile) && <span className="addr-err">{mobileError || formErrors.mobile}</span>}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">WhatsApp / Phone Number</label>
-                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ padding: '10px 0 10px 14px', color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--body)', whiteSpace: 'nowrap' }}>+91</span>
+              {/* 3. WhatsApp */}
+              <div className="addr-field">
+                <label className="foot-label">WhatsApp Number (optional)</label>
+                <div className="notify-box prefix-row">
+                  <span className="pfx">+91</span>
                   <input
                     type="tel"
                     value={checkoutPhone}
-                    onChange={(e) => setCheckoutPhone(e.target.value)}
-                    placeholder="9876543210"
-                    required
-                    pattern="[0-9+\-\s]{7,15}"
-                    style={{ padding: '10px 14px 10px 0', flex: 1, width: '100%' }}
+                    onChange={e => setCheckoutPhone(e.target.value)}
+                    placeholder="Same as mobile or different"
+                    maxLength={10}
                   />
                 </div>
-                <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', fontStyle: 'italic' }}>Used for order notifications via WhatsApp.</span>
+                <span className="addr-caption">Leave blank to use Mobile for WhatsApp notifications.</span>
               </div>
 
-              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Choose Payment Method<span className="arr">&rarr;</span></button>
+              {/* 4. Pin Code */}
+              <div className="addr-field">
+                <label className="foot-label">Pin Code *</label>
+                <div className="notify-box">
+                  <input type="text" inputMode="numeric" value={checkoutPin} onChange={e => setCheckoutPin(e.target.value.replace(/\D/g,''))} placeholder="400001" maxLength={6} required />
+                </div>
+                {formErrors.pin && <span className="addr-err">{formErrors.pin}</span>}
+              </div>
+
+              {/* 5. Locality */}
+              <div className="addr-field">
+                <label className="foot-label">Locality / Area / Street *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutLocality} onChange={e => setCheckoutLocality(e.target.value)} placeholder="Bandra West" required />
+                </div>
+                {formErrors.locality && <span className="addr-err">{formErrors.locality}</span>}
+              </div>
+
+              {/* 6. Flat / Building */}
+              <div className="addr-field">
+                <label className="foot-label">Flat No. / Building Name *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutFlat} onChange={e => setCheckoutFlat(e.target.value)} placeholder="B-204, Horizon Apartments" required />
+                </div>
+                {formErrors.flat && <span className="addr-err">{formErrors.flat}</span>}
+              </div>
+
+              {/* 7. Landmark */}
+              <div className="addr-field">
+                <label className="foot-label">Landmark *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutLandmark} onChange={e => setCheckoutLandmark(e.target.value)} placeholder="Near Linking Road" required />
+                </div>
+                {formErrors.landmark && <span className="addr-err">{formErrors.landmark}</span>}
+              </div>
+
+              {/* 8. City */}
+              <div className="addr-field">
+                <label className="foot-label">District / City *</label>
+                <div className="notify-box">
+                  <input type="text" value={checkoutCity} onChange={e => setCheckoutCity(e.target.value)} placeholder="Mumbai" required />
+                </div>
+                {formErrors.city && <span className="addr-err">{formErrors.city}</span>}
+              </div>
+
+              {/* 9. State */}
+              <div className="addr-field">
+                <label className="foot-label">State *</label>
+                <div className="notify-box">
+                  <select value={checkoutState} onChange={e => setCheckoutState(e.target.value)} required
+                    style={{ width:'100%', boxSizing:'border-box', padding:'10px 14px', background:'var(--ink)', border:'none', color: checkoutState ? 'var(--bone)' : 'var(--dim)', fontFamily:'var(--body)', fontSize:'0.85rem', outline:'none', appearance:'none', cursor:'pointer' }}>
+                    <option value="" disabled>Select state</option>
+                    {['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Andaman and Nicobar Islands','Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi','Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry'].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                {formErrors.state && <span className="addr-err">{formErrors.state}</span>}
+              </div>
+
+              {/* 10. Address Type */}
+              <div className="addr-field">
+                <label className="foot-label">Address Type</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {(['Home', 'Work', 'Others'] as const).map(type => (
+                    <button
+                      key={type} type="button"
+                      onClick={() => setCheckoutAddressType(type)}
+                      style={{
+                        flex: 1, padding: '8px 0', borderRadius: '8px', cursor: 'pointer',
+                        fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.1em', textTransform: 'uppercase',
+                        background: checkoutAddressType === type ? 'var(--red)' : 'var(--ink)',
+                        border: `1px solid ${checkoutAddressType === type ? 'var(--red)' : 'var(--hair2)'}`,
+                        color: checkoutAddressType === type ? '#fff' : 'var(--dim)',
+                        transition: 'all 0.18s'
+                      }}
+                    >{type}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                <button className="checkout" type="submit" style={{ flex: 1 }}>Save &amp; Continue<span className="arr">&rarr;</span></button>
+                <button type="button" onClick={handleShippingReset}
+                  style={{ flex: '0 0 auto', padding: '0 18px', background: 'none', border: '1px solid var(--hair2)', borderRadius: '8px', color: 'var(--dim)', fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer' }}
+                >Reset</button>
+              </div>
             </form>
           </>
         ) : checkoutStep === 'payment-method' ? (
