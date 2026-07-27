@@ -177,9 +177,93 @@ function CardVisualizer({
     </div>
   );
 }
+// ─── Pay confirmation modal — shown before any payment/order submission ─────
+function PayConfirmModal({
+  open, total, paymentMethod, addressSummary, onConfirm, onCancel
+}: {
+  open: boolean;
+  total: number;
+  paymentMethod: string;
+  addressSummary: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const methodLabel: Record<string, string> = {
+    card: 'Credit / Debit Card',
+    upi:  'UPI',
+    cod:  'Cash on Delivery',
+  };
+  const label = methodLabel[paymentMethod] ?? paymentMethod;
+
+  return (
+    <div className={`pay-confirm-overlay${open ? ' open' : ''}`} role="dialog" aria-modal="true">
+      <div className="pay-confirm-backdrop" onClick={onCancel} />
+      <div className="pay-confirm-card">
+        {/* Header */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ fontFamily: 'var(--disp)', fontSize: '1rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--bone)' }}>
+            Confirm Order
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
+            Please review before we process your payment.
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: '1px', background: 'var(--hair2)' }} />
+
+        {/* Summary rows */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>Order Total</span>
+            <span style={{ fontSize: '1.05rem', color: 'var(--bone)', fontFamily: 'var(--disp)', fontWeight: 700 }}>₹{total.toLocaleString('en-IN')}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>Payment via</span>
+            <span style={{ fontSize: '0.76rem', color: 'var(--bone)', fontFamily: 'var(--disp)', letterSpacing: '0.06em' }}>{label}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)', flexShrink: 0 }}>Delivering to</span>
+            <span style={{ fontSize: '0.76rem', color: 'var(--bone)', fontFamily: 'var(--body)', textAlign: 'right' }}>{addressSummary}</span>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: '1px', background: 'var(--hair2)' }} />
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <button
+            className="checkout"
+            type="button"
+            onClick={onConfirm}
+            style={{ position: 'relative', overflow: 'hidden' }}
+          >
+            {paymentMethod === 'cod'
+              ? `Confirm · Pay ₹${total.toLocaleString('en-IN')} on Delivery`
+              : `Confirm & Pay ₹${total.toLocaleString('en-IN')}`
+            }
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              background: 'none', border: '1px solid var(--hair2)', borderRadius: '10px',
+              padding: '11px', color: 'var(--dim)', fontFamily: 'var(--disp)', fontSize: '0.65rem',
+              letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
+              transition: 'border-color .2s, color .2s'
+            }}
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── MOCK payment form — NO Stripe hooks, plain HTML inputs ──────────────────
-function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: number; shippingName: string; onSuccess: () => void; onBack: () => void }) {
+function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBack }: { total: number; shippingName: string; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
   const [loading, setLoading] = useState(false);
   const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
   const [cardFlipped, setCardFlipped] = useState(false);
@@ -187,6 +271,7 @@ function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: nu
   const [expiry, setExpiry] = useState('12/28');
   const [cvc, setCvc] = useState('123');
   const [showCvvTooltip, setShowCvvTooltip] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const handleCardNumberChange = (val: string) => {
     const clean = val.replace(/\D/g, '').slice(0, 16);
@@ -208,122 +293,137 @@ function MockPaymentForm({ total, shippingName, onSuccess, onBack }: { total: nu
     setCvc(clean);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doSubmit = async () => {
+    setShowConfirmModal(false);
     setLoading(true);
     await new Promise(r => setTimeout(r, 800));
     onSuccess();
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setShowConfirmModal(true);
+  };
+
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <div style={{ background: 'rgba(225,6,0,0.07)', border: '1px solid rgba(225,6,0,0.25)', borderRadius: '10px', padding: '8px 14px', fontSize: '0.7rem', color: 'var(--red)', letterSpacing: '0.04em' }}>
-        ⚡ Demo mode — no real payment is processed
-      </div>
-      <CardVisualizer
-        cardHolder={cardHolder}
-        cardFlipped={cardFlipped}
-        cardBrand="DEMO"
-        cardNumber={cardNumber}
-        cardExpiry={expiry}
-        cardCvc={cvc}
-        onFlipToggle={() => setCardFlipped(!cardFlipped)}
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Card Number</label>
-          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            <input
-              type="text"
-              value={cardNumber}
-              onChange={e => handleCardNumberChange(e.target.value)}
-              maxLength={19}
-              required
-              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-            />
-          </div>
+    <>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ background: 'rgba(225,6,0,0.07)', border: '1px solid rgba(225,6,0,0.25)', borderRadius: '10px', padding: '8px 14px', fontSize: '0.7rem', color: 'var(--red)', letterSpacing: '0.04em' }}>
+          ⚡ Demo mode — no real payment is processed
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Cardholder Name</label>
-          <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input
-              type="text"
-              placeholder="Name on Card"
-              value={cardHolder}
-              onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
-              required
-              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
-            />
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        <CardVisualizer
+          cardHolder={cardHolder}
+          cardFlipped={cardFlipped}
+          cardBrand="DEMO"
+          cardNumber={cardNumber}
+          cardExpiry={expiry}
+          cardCvc={cvc}
+          onFlipToggle={() => setCardFlipped(!cardFlipped)}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">Expiry Date</label>
+            <label className="foot-label">Card Number</label>
             <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
               <input
                 type="text"
-                placeholder="MM/YY"
-                value={expiry}
-                onChange={e => handleExpiryChange(e.target.value)}
-                maxLength={5}
+                value={cardNumber}
+                onChange={e => handleCardNumberChange(e.target.value)}
+                maxLength={19}
                 required
                 style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
               />
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-              <label className="foot-label">CVV / Code</label>
-              <span
-                onClick={() => setShowCvvTooltip(!showCvvTooltip)}
-                onMouseEnter={() => setShowCvvTooltip(true)}
-                onMouseLeave={() => setShowCvvTooltip(false)}
-                style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
-              >
-                What's This?
-              </span>
-              {showCvvTooltip && (
-                <div style={{
-                  position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
-                  background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
-                  padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
-                  lineHeight: 1.3, fontFamily: 'var(--body)'
-                }}>
-                  3-digit security code on the back of your card
-                </div>
-              )}
-            </div>
-            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label className="foot-label">Cardholder Name</label>
+            <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
               <input
-                type="password"
-                value={cvc}
-                onChange={e => handleCvcChange(e.target.value)}
-                onFocus={() => setCardFlipped(true)}
-                onBlur={() => setCardFlipped(false)}
-                maxLength={4}
+                type="text"
+                placeholder="Name on Card"
+                value={cardHolder}
+                onChange={e => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
                 required
                 style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
               />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label className="foot-label">Expiry Date</label>
+              <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+                <input
+                  type="text"
+                  placeholder="MM/YY"
+                  value={expiry}
+                  onChange={e => handleExpiryChange(e.target.value)}
+                  maxLength={5}
+                  required
+                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+                <label className="foot-label">CVV / Code</label>
+                <span
+                  onClick={() => setShowCvvTooltip(!showCvvTooltip)}
+                  onMouseEnter={() => setShowCvvTooltip(true)}
+                  onMouseLeave={() => setShowCvvTooltip(false)}
+                  style={{ fontSize: '0.65rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}
+                >
+                  What's This?
+                </span>
+                {showCvvTooltip && (
+                  <div style={{
+                    position: 'absolute', bottom: 'calc(100% + 6px)', right: 0,
+                    background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
+                    padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '180px', pointerEvents: 'none',
+                    lineHeight: 1.3, fontFamily: 'var(--body)'
+                  }}>
+                    3-digit security code on the back of your card
+                  </div>
+                )}
+              </div>
+              <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+                <input
+                  type="password"
+                  value={cvc}
+                  onChange={e => handleCvcChange(e.target.value)}
+                  onFocus={() => setCardFlipped(true)}
+                  onBlur={() => setCardFlipped(false)}
+                  maxLength={4}
+                  required
+                  style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+                />
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
-        By placing this order, you agree to Aura Farming's T&amp;C
-      </div>
-      <button className="checkout" type="submit" disabled={loading}>
-        {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
-      </button>
-      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        ← Back to Shipping
-      </button>
-    </form>
+        <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
+          By placing this order, you agree to Aura Farming's T&amp;C
+        </div>
+        <button className="checkout" type="submit" disabled={loading}>
+          {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
+        </button>
+        <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
+          ← Back to Shipping
+        </button>
+      </form>
+      <PayConfirmModal
+        open={showConfirmModal}
+        total={total}
+        paymentMethod="card"
+        addressSummary={addressSummary}
+        onConfirm={doSubmit}
+        onCancel={() => setShowConfirmModal(false)}
+      />
+    </>
   );
 }
 
 // ─── REAL Stripe form — must be rendered inside <Elements> provider ───────────
-function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess, onBack }: { clientSecret: string; orderId: string; total: number; shippingName: string; onSuccess: () => void; onBack: () => void }) {
+function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSummary, onSuccess, onBack }: { clientSecret: string; orderId: string; total: number; shippingName: string; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
@@ -332,12 +432,13 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
   const [cardFlipped, setCardFlipped] = useState(false);
   const [cardBrand, setCardBrand] = useState('AURA CARD');
   const [showCvvTooltip, setShowCvvTooltip] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const stripeElementStyle = { style: { base: { color: '#ece8e1', fontFamily: '"Inter Tight", sans-serif', fontSize: '14px', lineHeight: '24px', '::placeholder': { color: '#65625e' } }, invalid: { color: '#e10600' } } };
   const expiryElementOptions = { ...stripeElementStyle, placeholder: 'MM/YY' };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doStripeSubmit = async () => {
+    setShowConfirmModal(false);
     if (!stripe || !elements) return;
     setLoading(true);
     setErrorMessage('');
@@ -356,6 +457,11 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
       setErrorMessage('Unexpected transaction status.');
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setShowConfirmModal(true);
   };
 
   return (
@@ -426,15 +532,31 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
         ← Back to Shipping
       </button>
     </form>
+    <PayConfirmModal
+      open={showConfirmModal}
+      total={total}
+      paymentMethod="card"
+      addressSummary={addressSummary}
+      onConfirm={doStripeSubmit}
+      onCancel={() => setShowConfirmModal(false)}
+    />
   );
 }
 
-// ─── UPI payment form — support ID collect or QR code scanning ──────────────────
-function UpiPaymentForm({ total, onSuccess, onBack }: { total: number; onSuccess: () => void; onBack: () => void }) {
+// ─── UPI payment form — support ID collect or QR code scanning ────────────────
+function UpiPaymentForm({ total, addressSummary, onSuccess, onBack }: { total: number; addressSummary: string; onSuccess: () => void; onBack: () => void }) {
   const [loading, setLoading] = useState(false);
   const [upiId, setUpiId] = useState('');
   const [saveUpi, setSaveUpi] = useState(false);
   const [upiError, setUpiError] = useState('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+  const doSubmit = async () => {
+    setShowConfirmModal(false);
+    setLoading(true);
+    await new Promise(r => setTimeout(r, 1200));
+    onSuccess();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -443,13 +565,12 @@ function UpiPaymentForm({ total, onSuccess, onBack }: { total: number; onSuccess
       return;
     }
     setUpiError('');
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 1200));
-    onSuccess();
+    setShowConfirmModal(true);
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <label className="foot-label">Enter your UPI ID</label>
         <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
@@ -540,6 +661,15 @@ function UpiPaymentForm({ total, onSuccess, onBack }: { total: number; onSuccess
         ← Back to Payment Mode
       </button>
     </form>
+    <PayConfirmModal
+      open={showConfirmModal}
+      total={total}
+      paymentMethod="upi"
+      addressSummary={addressSummary}
+      onConfirm={doSubmit}
+      onCancel={() => setShowConfirmModal(false)}
+    />
+    </>
   );
 }
 
@@ -666,13 +796,22 @@ function CodPaymentScreen({ total, bagTotal, onConfirm, onBack }: { total: numbe
         By placing this order, you agree to Aura Farming's T&amp;C
       </div>
 
-      <button className="checkout" type="button" onClick={onConfirm}>
+      <button className="checkout" type="button" onClick={() => setShowConfirmModal(true)}>
         Confirm Order · Pay ₹{total.toLocaleString('en-IN')} on Delivery
       </button>
 
       <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
         ← Back to Payment Mode
       </button>
+
+      <PayConfirmModal
+        open={showConfirmModal}
+        total={total}
+        paymentMethod="cod"
+        addressSummary={addressSummary}
+        onConfirm={() => { setShowConfirmModal(false); onConfirm(); }}
+        onCancel={() => setShowConfirmModal(false)}
+      />
     </div>
   );
 }
@@ -2806,83 +2945,99 @@ export default function Storefront() {
               <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              {selectedPaymentMethod === 'cod' ? (
-                <CodPaymentScreen
-                  total={checkoutTotal}
-                  bagTotal={checkoutBagTotal}
-                  onBack={() => setCheckoutStep('payment-method')}
-                  onConfirm={() => {
-                    setCart([]);
-                    updateLocalStorage([]);
-                    setCheckoutStep('cart');
-                    setCartOpen(false);
-                    fly('Order placed! Cash on Delivery — pay ₹' + checkoutTotal.toLocaleString('en-IN') + ' upon arrival.');
-                    fetchOrders();
-                    setAuthMode('profile');
-                    setTimeout(() => setAuthOpen(true), 1200);
-                  }}
-                />
-              ) : selectedPaymentMethod === 'upi' ? (
-                <>
-                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                  <UpiPaymentForm
-                    total={checkoutTotal}
-                    onBack={() => setCheckoutStep('payment-method')}
-                    onSuccess={() => {
-                      setCart([]);
-                      updateLocalStorage([]);
-                      setCheckoutStep('cart');
-                      setCartOpen(false);
-                      fly('Payment received successfully. Order initialized.');
-                      fetchOrders();
-                      setAuthMode('profile');
-                      setTimeout(() => setAuthOpen(true), 1200);
-                    }}
-                  />
-                </>
-              ) : isMockPayment ? (
-                <>
-                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                  <MockPaymentForm
-                    total={checkoutTotal}
-                    shippingName={checkoutName}
-                    onBack={() => setCheckoutStep('payment-method')}
-                    onSuccess={() => {
-                      setCart([]);
-                      updateLocalStorage([]);
-                      setCheckoutStep('cart');
-                      setCartOpen(false);
-                      fly('Payment received successfully. Order initialized.');
-                      fetchOrders();
-                      setAuthMode('profile');
-                      setTimeout(() => setAuthOpen(true), 1200);
-                    }}
-                  />
-                </>
-              ) : (
-                <>
-                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                  <Elements stripe={stripePromise} options={{ clientSecret }}>
-                    <RealStripeForm
-                      clientSecret={clientSecret}
-                      orderId={checkoutOrderId}
-                      total={checkoutTotal}
-                      shippingName={checkoutName}
-                      onBack={() => setCheckoutStep('payment-method')}
-                      onSuccess={() => {
-                        setCart([]);
-                        updateLocalStorage([]);
-                        setCheckoutStep('cart');
-                        setCartOpen(false);
-                        fly('Payment received successfully. Order initialized.');
-                        fetchOrders();
-                        setAuthMode('profile');
-                        setTimeout(() => setAuthOpen(true), 1200);
-                      }}
-                    />
-                  </Elements>
-                </>
-              )}
+              {(() => {
+                const addressSummary = selectedAddress
+                  ? `${selectedAddress.name} · ${selectedAddress.city}`
+                  : checkoutName
+                    ? `${checkoutName} · ${checkoutAddress.split(',').slice(-3, -1).join(',').trim() || 'India'}`
+                    : 'Your address';
+                return (
+                  <>
+                    {selectedPaymentMethod === 'cod' ? (
+                      <CodPaymentScreen
+                        total={checkoutTotal}
+                        bagTotal={checkoutBagTotal}
+                        addressSummary={addressSummary}
+                        onBack={() => setCheckoutStep('payment-method')}
+                        onConfirm={() => {
+                          setCart([]);
+                          updateLocalStorage([]);
+                          setCheckoutStep('cart');
+                          setCartOpen(false);
+                          fly('Order placed! Cash on Delivery — pay ₹' + checkoutTotal.toLocaleString('en-IN') + ' upon arrival.');
+                          fetchOrders();
+                          setAuthMode('profile');
+                          setTimeout(() => setAuthOpen(true), 1200);
+                        }}
+                      />
+                    ) : selectedPaymentMethod === 'upi' ? (
+                      <>
+                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                        <UpiPaymentForm
+                          total={checkoutTotal}
+                          addressSummary={addressSummary}
+                          onBack={() => setCheckoutStep('payment-method')}
+                          onSuccess={() => {
+                            setCart([]);
+                            updateLocalStorage([]);
+                            setCheckoutStep('cart');
+                            setCartOpen(false);
+                            fly('Payment received successfully. Order initialized.');
+                            fetchOrders();
+                            setAuthMode('profile');
+                            setTimeout(() => setAuthOpen(true), 1200);
+                          }}
+                        />
+                      </>
+                    ) : isMockPayment ? (
+                      <>
+                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                        <MockPaymentForm
+                          total={checkoutTotal}
+                          shippingName={checkoutName}
+                          addressSummary={addressSummary}
+                          onBack={() => setCheckoutStep('payment-method')}
+                          onSuccess={() => {
+                            setCart([]);
+                            updateLocalStorage([]);
+                            setCheckoutStep('cart');
+                            setCartOpen(false);
+                            fly('Payment received successfully. Order initialized.');
+                            fetchOrders();
+                            setAuthMode('profile');
+                            setTimeout(() => setAuthOpen(true), 1200);
+                          }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                        <Elements stripe={stripePromise} options={{ clientSecret }}>
+                          <RealStripeForm
+                            clientSecret={clientSecret}
+                            orderId={checkoutOrderId}
+                            total={checkoutTotal}
+                            shippingName={checkoutName}
+                            addressSummary={addressSummary}
+                            onBack={() => setCheckoutStep('payment-method')}
+                            onSuccess={() => {
+                              setCart([]);
+                              updateLocalStorage([]);
+                              setCheckoutStep('cart');
+                              setCartOpen(false);
+                              fly('Payment received successfully. Order initialized.');
+                              fetchOrders();
+                              setAuthMode('profile');
+                              setTimeout(() => setAuthOpen(true), 1200);
+                            }}
+                          />
+                        </Elements>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+
             </div>
           </>
         )}

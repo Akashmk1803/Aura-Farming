@@ -487,3 +487,10 @@ h2{position:relative}
 .suggestion-item:hover{background:rgba(225,6,0,0.06) !important;border-color:var(--red) !important}
 .modal-wishlist-btn:hover{background:rgba(236,232,225,0.06) !important;border-color:var(--bone) !important;color:#fff !important}
 .modal-wishlist-btn:active{transform:scale(0.98)}
+
+/* ============ PAY CONFIRMATION MODAL ============ */
+.pay-confirm-overlay{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;padding:20px;opacity:0;visibility:hidden;transition:opacity .3s,visibility .3s}
+.pay-confirm-overlay.open{opacity:1;visibility:visible}
+.pay-confirm-backdrop{position:absolute;inset:0;background:rgba(9,9,10,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.pay-confirm-card{position:relative;z-index:2;width:min(420px,100%);background:var(--coal);border:1px solid var(--hair2);border-radius:20px;padding:28px 26px;box-shadow:0 40px 80px rgba(0,0,0,.7);display:flex;flex-direction:column;gap:20px;animation:payConfirmSlide .38s cubic-bezier(.16,1,.3,1) both}
+@keyframes payConfirmSlide{from{transform:translateY(28px) scale(.97);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
