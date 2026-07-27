@@ -126,6 +126,28 @@ try { sqlite.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'ca
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN refund_amount INTEGER`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN phone TEXT DEFAULT '' NOT NULL`); } catch (_) {}
 
+// Create addresses table if not exists
+try {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS addresses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mobile TEXT NOT NULL,
+      whatsapp_number TEXT,
+      pin_code TEXT NOT NULL,
+      locality TEXT NOT NULL,
+      flat_number TEXT NOT NULL,
+      landmark TEXT NOT NULL,
+      city TEXT NOT NULL,
+      state TEXT NOT NULL,
+      address_type TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+} catch (_) {}
+
+
 
 // Backfill is_customizable=1 for hoodies, tees, longsleeve in existing seeded rows
 sqlite.exec(`UPDATE products SET is_customizable = 1 WHERE category IN ('hoodies', 'tees') AND is_customizable = 0`);

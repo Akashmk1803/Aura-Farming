@@ -92,3 +92,20 @@ export const wishlist = sqliteTable('wishlist', {
   productId: text('product_id').notNull().references(() => products.id),
   createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
 });
+
+export const addresses = sqliteTable('addresses', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => user.id),
+  name: text('name').notNull(),
+  mobile: text('mobile').notNull(),
+  whatsappNumber: text('whatsapp_number'),
+  pinCode: text('pin_code').notNull(),
+  locality: text('locality').notNull(),
+  flatNumber: text('flat_number').notNull(),
+  landmark: text('landmark').notNull(),
+  city: text('city').notNull(),
+  state: text('state').notNull(),
+  addressType: text('address_type').notNull(), // 'Home', 'Work', 'Others'
+  isDefault: integer('is_default', { mode: 'boolean' }).default(false).notNull(),
+});
+
