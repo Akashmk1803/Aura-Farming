@@ -3232,19 +3232,50 @@ export default function Storefront() {
               <div style={{ marginTop: '10px', borderTop: '1px solid var(--hair2)', paddingTop: '20px' }}>
                 <h5 className="foot-label" style={{ marginBottom: '10px' }}>Marked Lineage (Orders)</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  {userOrders.map(order => (
-                    <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
-                        <span style={{ color: 'var(--bone)' }}>{order.id}</span>
-                        <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
+                  {(() => {
+                    const sorted = [...userOrders].sort((a, b) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime());
+                    const groups: { label: string; items: typeof userOrders }[] = [];
+                    const todayStr = new Date().toDateString();
+                    const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
+                    const yestStr = yestDate.toDateString();
+                    
+                    sorted.forEach(order => {
+                      const d = new Date(order.created_at || order.createdAt || 0);
+                      const dStr = d.toDateString();
+                      let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                      if (dStr === todayStr) label = 'Today';
+                      else if (dStr === yestStr) label = 'Yesterday';
+                      
+                      let group = groups.find(g => g.label === label);
+                      if (!group) { group = { label, items: [] }; groups.push(group); }
+                      group.items.push(order);
+                    });
+                    
+                    if (groups.length === 0) return <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>;
+                    
+                    return groups.map(g => (
+                      <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
+                        {g.items.map(order => {
+                          const dateObj = new Date(order.created_at || order.createdAt || 0);
+                          const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                          return (
+                            <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                                <span style={{ color: 'var(--bone)' }}>{order.id}</span>
+                                <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
+                              </div>
+                              <div style={{ fontSize: '0.65rem', color: 'var(--dim)', fontStyle: 'italic' }}>{timeStr}</div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
+                              <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
+                                Track Progress &rarr;
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
-                      <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
-                        Track Progress &rarr;
-                      </button>
-                    </div>
-                  ))}
-                  {userOrders.length === 0 && <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>}
+                    ));
+                  })()}
                 </div>
               </div>
 
@@ -3451,24 +3482,56 @@ export default function Storefront() {
               <div>
                 <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Order Status Override</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
-                  {adminStats.orders.map((o: any) => (
-                    <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                        <span style={{ color: 'var(--bone)' }}>{o.id}</span>
-                        <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
+                  {(() => {
+                    const sorted = [...adminStats.orders].sort((a: any, b: any) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime());
+                    const groups: { label: string; items: any[] }[] = [];
+                    const todayStr = new Date().toDateString();
+                    const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
+                    const yestStr = yestDate.toDateString();
+                    
+                    sorted.forEach((o: any) => {
+                      const d = new Date(o.created_at || o.createdAt || 0);
+                      const dStr = d.toDateString();
+                      let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                      if (dStr === todayStr) label = 'Today';
+                      else if (dStr === yestStr) label = 'Yesterday';
+                      
+                      let group = groups.find(g => g.label === label);
+                      if (!group) { group = { label, items: [] }; groups.push(group); }
+                      group.items.push(o);
+                    });
+                    
+                    if (groups.length === 0) return null;
+                    
+                    return groups.map(g => (
+                      <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
+                        {g.items.map((o: any) => {
+                          const dateObj = new Date(o.created_at || o.createdAt || 0);
+                          const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                          return (
+                            <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                                <span style={{ color: 'var(--bone)' }}>{o.id}</span>
+                                <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
+                              </div>
+                              <div style={{ fontSize: '0.65rem', color: 'var(--dim)', fontStyle: 'italic' }}>{timeStr}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>
+                                Recipient: {o.shipping_name || o.shippingName} &middot; Total: ₹{o.total.toLocaleString('en-IN')} ({o.paymentMethod ? o.paymentMethod.toUpperCase() : (o.payment_method ? o.payment_method.toUpperCase() : 'CARD')})
+                              </div>
+                              {o.status === 'returned' && (o.refundAmount !== null || o.refund_amount !== null) && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--red)', fontWeight: 500 }}>
+                                  Refund: ₹{((o.refundAmount ?? o.refund_amount ?? Math.max(0, o.total - 40))).toLocaleString('en-IN')}
+                                  {((o.paymentMethod || o.payment_method) !== 'cod') ? ' (₹40 deduction)' : ' (COD no refund)'}
+                                </div>
+                              )}
+                              <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>
-                        Recipient: {o.shipping_name || o.shippingName} &middot; Total: ₹{o.total.toLocaleString('en-IN')} ({o.paymentMethod ? o.paymentMethod.toUpperCase() : (o.payment_method ? o.payment_method.toUpperCase() : 'CARD')})
-                      </div>
-                      {o.status === 'returned' && (o.refundAmount !== null || o.refund_amount !== null) && (
-                        <div style={{ fontSize: '0.7rem', color: 'var(--red)', fontWeight: 500 }}>
-                          Refund: ₹{((o.refundAmount ?? o.refund_amount ?? Math.max(0, o.total - 40))).toLocaleString('en-IN')}
-                          {((o.paymentMethod || o.payment_method) !== 'cod') ? ' (₹40 deduction)' : ' (COD no refund)'}
-                        </div>
-                      )}
-                      <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
-                    </div>
-                  ))}
+                    ));
+                  })()}
                 </div>
               </div>
 
