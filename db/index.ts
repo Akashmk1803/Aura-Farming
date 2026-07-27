@@ -28,7 +28,8 @@ sqlite.exec(`
     category TEXT NOT NULL,
     category_label TEXT NOT NULL,
     art_svg_key TEXT NOT NULL,
-    stock INTEGER NOT NULL DEFAULT 50
+    stock INTEGER NOT NULL DEFAULT 50,
+    is_limited INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS user (
@@ -116,21 +117,31 @@ sqlite.exec(`
 
 export const db = drizzle(sqlite, { schema });
 
+// Migrate: add is_limited column if it doesn't exist (safe for existing databases)
+try {
+  sqlite.exec('ALTER TABLE products ADD COLUMN is_limited INTEGER NOT NULL DEFAULT 0');
+} catch (_) {
+  // Column already exists — ignore
+}
+// Backfill: mark all 6 seeded products as limited (idempotent)
+sqlite.exec("UPDATE products SET is_limited = 1 WHERE id IN ('A','B','C','D','E','F')");
+
+
 // Seed products if catalog is empty
 const productCount = sqlite.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number };
 if (productCount.count === 0) {
   const initialProducts = [
-    { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, category: 'hoodies', category_label: 'Hoodie', art_svg_key: 'hoodie', stock: 50 },
-    { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, category: 'tees', category_label: 'Tee', art_svg_key: 'tee', stock: 50 },
-    { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, category: 'outerwear', category_label: 'Jacket', art_svg_key: 'jacket', stock: 50 },
-    { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, category: 'bottoms', category_label: 'Cargo', art_svg_key: 'cargo', stock: 50 },
-    { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, category: 'headwear', category_label: 'Cap', art_svg_key: 'cap', stock: 50 },
-    { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, category: 'tees', category_label: 'Longsleeve', art_svg_key: 'longsleeve', stock: 50 }
+    { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, category: 'hoodies', category_label: 'Hoodie', art_svg_key: 'hoodie', stock: 50, is_limited: 1 },
+    { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, category: 'tees', category_label: 'Tee', art_svg_key: 'tee', stock: 50, is_limited: 1 },
+    { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, category: 'outerwear', category_label: 'Jacket', art_svg_key: 'jacket', stock: 50, is_limited: 1 },
+    { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, category: 'bottoms', category_label: 'Cargo', art_svg_key: 'cargo', stock: 50, is_limited: 1 },
+    { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, category: 'headwear', category_label: 'Cap', art_svg_key: 'cap', stock: 50, is_limited: 1 },
+    { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, category: 'tees', category_label: 'Longsleeve', art_svg_key: 'longsleeve', stock: 50, is_limited: 1 }
   ];
 
   const insertProduct = sqlite.prepare(`
-    INSERT OR IGNORE INTO products (id, name, description, price, category, category_label, art_svg_key, stock)
-    VALUES (@id, @name, @description, @price, @category, @category_label, @art_svg_key, @stock)
+    INSERT OR IGNORE INTO products (id, name, description, price, category, category_label, art_svg_key, stock, is_limited)
+    VALUES (@id, @name, @description, @price, @category, @category_label, @art_svg_key, @stock, @is_limited)
   `);
 
   const transaction = sqlite.transaction((items) => {
