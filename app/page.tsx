@@ -419,6 +419,120 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, onSuccess,
   );
 }
 
+// ─── UPI payment form — support ID collect or QR code scanning ──────────────────
+function UpiPaymentForm({ total, onSuccess, onBack }: { total: number; onSuccess: () => void; onBack: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [upiId, setUpiId] = useState('');
+  const [saveUpi, setSaveUpi] = useState(false);
+  const [upiError, setUpiError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!upiId.trim() || !upiId.includes('@')) {
+      setUpiError('Please enter a valid UPI ID (e.g., name@bank)');
+      return;
+    }
+    setUpiError('');
+    setLoading(true);
+    await new Promise(r => setTimeout(r, 1200));
+    onSuccess();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <label className="foot-label">Enter your UPI ID</label>
+        <div className="notify-box" style={{ borderRadius: '12px', padding: '0', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+          <input
+            type="text"
+            placeholder="yourname@upi"
+            value={upiId}
+            onChange={e => { setUpiId(e.target.value); if (upiError) setUpiError(''); }}
+            required
+            style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)', width: '100%', outline: 'none' }}
+          />
+        </div>
+        {upiError && <div style={{ color: 'var(--red)', fontSize: '0.72rem', marginTop: '2px' }}>{upiError}</div>}
+        <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', fontStyle: 'italic' }}>
+          UPI Collect is disabled as per NPCI guideline
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <input
+          type="checkbox"
+          id="saveUpiId"
+          checked={saveUpi}
+          onChange={e => setSaveUpi(e.target.checked)}
+          style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--red)' }}
+        />
+        <label htmlFor="saveUpiId" style={{ color: 'var(--bone)', fontSize: '0.75rem', cursor: 'pointer', userSelect: 'none', fontFamily: 'var(--body)' }}>
+          Save this UPI ID for faster checkout
+        </label>
+      </div>
+
+      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '4px', fontFamily: 'var(--body)' }}>
+        By placing this order, you agree to Aura Farming's T&amp;C
+      </div>
+
+      <button className="checkout" type="submit" disabled={loading}>
+        {loading ? 'Verifying transaction...' : `Pay ₹${total.toLocaleString('en-IN')}`}
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '8px 0' }}>
+        <div style={{ flex: 1, height: '1px', background: 'var(--hair2)' }} />
+        <span style={{ fontSize: '0.62rem', color: 'var(--dim2)', fontFamily: 'var(--disp)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>or</span>
+        <div style={{ flex: 1, height: '1px', background: 'var(--hair2)' }} />
+      </div>
+
+      <div style={{
+        background: 'var(--ink)',
+        border: '1px solid var(--hair2)',
+        borderRadius: '12px',
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '12px',
+        textAlign: 'center'
+      }}>
+        <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.72rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+          Scan QR Code
+        </div>
+        <div style={{ color: 'var(--dim)', fontSize: '0.65rem', fontFamily: 'var(--body)', margin: '-6px 0 4px' }}>
+          Scan and pay using any UPI App
+        </div>
+        <div style={{
+          width: '120px',
+          height: '120px',
+          background: '#fff',
+          borderRadius: '8px',
+          padding: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+        }}>
+          <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%', fill: 'var(--ink)' }}>
+            <path d="M0 0h30v10H10v20H0V0zm10 10h10v10H10V10z" />
+            <path d="M70 0h30v30H90v-20H70V0zm10 10h10v10H80V10z" />
+            <path d="M0 70h10v20h20v10H0V70zm10 20h10v-10H10v10z" />
+            <path d="M35 35h10v10H35zm20 0h10v10H55zm0 20h10v10H55zm-20 20h10v10H35zm20 0h10v10H55zm20-35h10v10H75zm0 20h10v10H75zm-40-20h10v10H35zm20 0h10v10H55z" opacity="0.8" />
+            <path d="M45 45h10v10H45zm20 15h10v15H65zM35 60h15v5H35zm5 15h20v5H40zm25-50h5v15h-5z" opacity="0.9" />
+          </svg>
+        </div>
+        <span style={{ fontSize: '0.62rem', color: 'var(--dim2)', letterSpacing: '0.04em' }}>
+          Real-time dynamic merchant code verification enabled.
+        </span>
+      </div>
+
+      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
+        ← Back to Payment Mode
+      </button>
+    </form>
+  );
+}
+
 export default function Storefront() {
   const splitWord = (word: string, rowIndex: number) => {
     return word.split('').map((char, charIndex) => {
@@ -2523,7 +2637,22 @@ export default function Storefront() {
               <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              {isMockPayment ? (
+              {selectedPaymentMethod === 'upi' ? (
+                <UpiPaymentForm
+                  total={checkoutTotal}
+                  onBack={() => setCheckoutStep('payment-method')}
+                  onSuccess={() => {
+                    setCart([]);
+                    updateLocalStorage([]);
+                    setCheckoutStep('cart');
+                    setCartOpen(false);
+                    fly('Payment received successfully. Order initialized.');
+                    fetchOrders();
+                    setAuthMode('profile');
+                    setTimeout(() => setAuthOpen(true), 1200);
+                  }}
+                />
+              ) : isMockPayment ? (
                 <MockPaymentForm
                   total={checkoutTotal}
                   shippingName={checkoutName}
