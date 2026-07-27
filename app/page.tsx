@@ -309,6 +309,10 @@ export default function Storefront() {
   const [toastShow, setToastShow] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
+  // Email verification states
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [resendingVerification, setResendingVerification] = useState(false);
+
   // Ref nodes
   const threadSvgRef = useRef<SVGSVGElement>(null);
   const lineRef = useRef<SVGPathElement>(null);
@@ -467,13 +471,19 @@ export default function Storefront() {
       fly('Email and password credentials are required.');
       return;
     }
+    setUnverifiedEmail('');
     const { data, error } = await authClient.signIn.email({
       email: loginEmail,
       password: loginPassword
     });
 
     if (error) {
-      fly(error.message || 'Login details invalid.');
+      if (error.code === 'EMAIL_NOT_VERIFIED' || error.message?.toLowerCase().includes('verify')) {
+        setUnverifiedEmail(loginEmail);
+        fly('Please verify your email before logging in.');
+      } else {
+        fly(error.message || 'Login details invalid.');
+      }
     } else {
       setUser(data.user);
       setUpdateName(data.user.name);
@@ -503,15 +513,28 @@ export default function Storefront() {
     if (error) {
       fly(error.message || 'Registration failed.');
     } else {
-      setUser(data.user);
-      setUpdateName(data.user.name);
-      setUpdateAddress((data.user as any).shippingAddress || '');
-      fly(`Registration complete. Welcome to Aura Farming, ${data.user.name}`);
-      fetchWishlist();
-      setAuthOpen(false);
+      fly('Initiation registered. Please check your email to verify your account.');
+      setAuthMode('login');
+      setUnverifiedEmail(regEmail);
       setRegName('');
       setRegEmail('');
       setRegPassword('');
+    }
+  };
+
+  // Resend verification email helper
+  const handleResendVerification = async () => {
+    if (!unverifiedEmail) return;
+    setResendingVerification(true);
+    const { error } = await authClient.sendVerificationEmail({
+      email: unverifiedEmail,
+      callbackURL: window.location.origin
+    });
+    setResendingVerification(false);
+    if (error) {
+      fly(error.message || 'Failed to resend verification email.');
+    } else {
+      fly('Verification email resent. Please check your inbox.');
     }
   };
 
@@ -1931,6 +1954,27 @@ export default function Storefront() {
               </div>
             </div>
             <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Authorize Session</button>
+            {unverifiedEmail && (
+              <div style={{
+                background: 'rgba(225,6,0,0.06)', border: '1px solid rgba(225,6,0,0.3)',
+                padding: '10px 14px', borderRadius: '8px', textAlign: 'center', fontSize: '0.75rem',
+                color: 'var(--bone)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px'
+              }}>
+                <span>Account is not verified yet.</span>
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={resendingVerification}
+                  style={{
+                    background: 'none', border: 'none', color: 'var(--red)', textDecoration: 'underline',
+                    cursor: 'pointer', fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.12em',
+                    textTransform: 'uppercase', padding: '2px'
+                  }}
+                >
+                  {resendingVerification ? 'Resending...' : 'Resend Verification Email'}
+                </button>
+              </div>
+            )}
             <p style={{ fontSize: '0.75rem', color: 'var(--dim2)', textAlign: 'center' }}>
               New user?{' '}
               <a onClick={() => setAuthMode('register')} style={{ color: 'var(--bone)', textDecoration: 'underline', cursor: 'pointer' }}>
