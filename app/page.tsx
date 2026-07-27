@@ -819,6 +819,11 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
     </div>
   );
 }
+const parseSqlDate = (ds: any) => {
+  if (!ds) return new Date(0);
+  const s = String(ds);
+  return new Date(s.endsWith('Z') ? s : s + ' UTC');
+};
 
 export default function Storefront() {
   const splitWord = (word: string, rowIndex: number) => {
@@ -3233,14 +3238,14 @@ export default function Storefront() {
                 <h5 className="foot-label" style={{ marginBottom: '10px' }}>Marked Lineage (Orders)</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--dim)' }}>
                   {(() => {
-                    const sorted = [...userOrders].sort((a, b) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime());
+                    const sorted = [...userOrders].sort((a, b) => parseSqlDate(b.created_at || b.createdAt).getTime() - parseSqlDate(a.created_at || a.createdAt).getTime());
                     const groups: { label: string; items: typeof userOrders }[] = [];
                     const todayStr = new Date().toDateString();
                     const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
                     const yestStr = yestDate.toDateString();
                     
                     sorted.forEach(order => {
-                      const d = new Date(order.created_at || order.createdAt || 0);
+                      const d = parseSqlDate(order.created_at || order.createdAt);
                       const dStr = d.toDateString();
                       let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                       if (dStr === todayStr) label = 'Today';
@@ -3257,7 +3262,7 @@ export default function Storefront() {
                       <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
                         {g.items.map(order => {
-                          const dateObj = new Date(order.created_at || order.createdAt || 0);
+                          const dateObj = parseSqlDate(order.created_at || order.createdAt);
                           const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                           return (
                             <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -3483,14 +3488,14 @@ export default function Storefront() {
                 <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Order Status Override</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
                   {(() => {
-                    const sorted = [...adminStats.orders].sort((a: any, b: any) => new Date(b.created_at || b.createdAt || 0).getTime() - new Date(a.created_at || a.createdAt || 0).getTime());
+                    const sorted = [...adminStats.orders].sort((a: any, b: any) => parseSqlDate(b.created_at || b.createdAt).getTime() - parseSqlDate(a.created_at || a.createdAt).getTime());
                     const groups: { label: string; items: any[] }[] = [];
                     const todayStr = new Date().toDateString();
                     const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
                     const yestStr = yestDate.toDateString();
                     
                     sorted.forEach((o: any) => {
-                      const d = new Date(o.created_at || o.createdAt || 0);
+                      const d = parseSqlDate(o.created_at || o.createdAt);
                       const dStr = d.toDateString();
                       let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                       if (dStr === todayStr) label = 'Today';
@@ -3507,7 +3512,7 @@ export default function Storefront() {
                       <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
                         {g.items.map((o: any) => {
-                          const dateObj = new Date(o.created_at || o.createdAt || 0);
+                          const dateObj = parseSqlDate(o.created_at || o.createdAt);
                           const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                           return (
                             <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
