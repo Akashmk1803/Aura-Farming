@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 export const products = sqliteTable('products', {
   id: text('id').primaryKey(),
@@ -78,7 +79,7 @@ export const orders = sqliteTable('orders', {
   paymentMethod: text('payment_method').default('card'), // 'card', 'upi', 'cod'
   refundAmount: integer('refund_amount'), // set when status = 'returned' on prepaid orders
   phone: text('phone').default('').notNull(),
-  createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
 });
 
@@ -96,7 +97,7 @@ export const wishlist = sqliteTable('wishlist', {
   userId: text('user_id').notNull().references(() => user.id),
   productId: text('product_id').notNull().references(() => products.id),
   size: text('size').default('M').notNull(),
-  createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const addresses = sqliteTable('addresses', {

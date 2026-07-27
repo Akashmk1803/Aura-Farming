@@ -820,7 +820,7 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
   );
 }
 const parseSqlDate = (ds: any) => {
-  if (!ds) return new Date(0);
+  if (!ds || ds === 'CURRENT_TIMESTAMP') return new Date();
   const s = String(ds);
   return new Date(s.endsWith('Z') ? s : s + ' UTC');
 };
