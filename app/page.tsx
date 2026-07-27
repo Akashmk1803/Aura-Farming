@@ -180,7 +180,7 @@ function CardVisualizer({
 }
 // ─── Pay confirmation modal — shown before any payment/order submission ─────
 function PayConfirmModal({
-  open, total, paymentMethod, addressSummary, onConfirm, onCancel
+  open, total, paymentMethod, addressSummary, onConfirm, onCancel, submitting
 }: {
   open: boolean;
   total: number;
@@ -188,6 +188,7 @@ function PayConfirmModal({
   addressSummary: string;
   onConfirm: () => void;
   onCancel: () => void;
+  submitting?: boolean;
 }) {
   const methodLabel: Record<string, string> = {
     card: 'Credit / Debit Card',
@@ -238,11 +239,14 @@ function PayConfirmModal({
             className="checkout"
             type="button"
             onClick={onConfirm}
-            style={{ position: 'relative', overflow: 'hidden' }}
+            disabled={submitting}
+            style={{ position: 'relative', overflow: 'hidden', opacity: submitting ? 0.65 : 1, cursor: submitting ? 'not-allowed' : 'pointer' }}
           >
-            {paymentMethod === 'cod'
-              ? `Confirm · Pay ₹${total.toLocaleString('en-IN')} on Delivery`
-              : `Confirm & Pay ₹${total.toLocaleString('en-IN')}`
+            {submitting
+              ? 'Processing…'
+              : paymentMethod === 'cod'
+                ? `Confirm · Pay ₹${total.toLocaleString('en-IN')} on Delivery`
+                : `Confirm & Pay ₹${total.toLocaleString('en-IN')}`
             }
           </button>
           <button
@@ -273,6 +277,7 @@ function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBac
   const [cvc, setCvc] = useState('123');
   const [showCvvTooltip, setShowCvvTooltip] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const submittingRef = React.useRef(false);
 
   const handleCardNumberChange = (val: string) => {
     const clean = val.replace(/\D/g, '').slice(0, 16);
@@ -295,9 +300,12 @@ function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBac
   };
 
   const doSubmit = async () => {
-    setShowConfirmModal(false);
+    if (submittingRef.current) return; // re-entry guard
+    submittingRef.current = true;
     setLoading(true);
+    setShowConfirmModal(false);
     await new Promise(r => setTimeout(r, 800));
+    submittingRef.current = false;
     onSuccess();
   };
 
@@ -416,6 +424,7 @@ function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBac
         total={total}
         paymentMethod="card"
         addressSummary={addressSummary}
+        submitting={loading}
         onConfirm={doSubmit}
         onCancel={() => { setShowConfirmModal(false); onBack(); }}
       />
@@ -434,29 +443,35 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSum
   const [cardBrand, setCardBrand] = useState('AURA CARD');
   const [showCvvTooltip, setShowCvvTooltip] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const submittingRef = React.useRef(false);
 
   const stripeElementStyle = { style: { base: { color: '#ece8e1', fontFamily: '"Inter Tight", sans-serif', fontSize: '14px', lineHeight: '24px', '::placeholder': { color: '#65625e' } }, invalid: { color: '#e10600' } } };
   const expiryElementOptions = { ...stripeElementStyle, placeholder: 'MM/YY' };
 
   const doStripeSubmit = async () => {
+    if (submittingRef.current) return; // re-entry guard
+    submittingRef.current = true;
     setShowConfirmModal(false);
-    if (!stripe || !elements) return;
+    if (!stripe || !elements) { submittingRef.current = false; return; }
     setLoading(true);
     setErrorMessage('');
     const cardNumberElement = elements.getElement(CardNumberElement);
-    if (!cardNumberElement) return;
+    if (!cardNumberElement) { submittingRef.current = false; setLoading(false); return; }
     const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, { payment_method: { card: cardNumberElement, billing_details: { name: shippingName } } });
     if (error) {
       setErrorMessage(error.message || 'Payment initiation failed.');
       setLoading(false);
+      submittingRef.current = false;
     } else if (paymentIntent && paymentIntent.status === 'succeeded') {
       try {
         await fetch('/api/webhooks/stripe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'payment_intent.succeeded', data: { object: { id: paymentIntent.id, metadata: { orderId } } } }) });
       } catch (err) { console.error('Webhook trigger warning:', err); }
+      submittingRef.current = false;
       onSuccess();
     } else {
       setErrorMessage('Unexpected transaction status.');
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
@@ -539,6 +554,7 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSum
       total={total}
       paymentMethod="card"
       addressSummary={addressSummary}
+      submitting={loading}
       onConfirm={doStripeSubmit}
       onCancel={() => { setShowConfirmModal(false); onBack(); }}
     />
@@ -553,11 +569,15 @@ function UpiPaymentForm({ total, addressSummary, onSuccess, onBack }: { total: n
   const [saveUpi, setSaveUpi] = useState(false);
   const [upiError, setUpiError] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const submittingRef = React.useRef(false);
 
   const doSubmit = async () => {
-    setShowConfirmModal(false);
+    if (submittingRef.current) return; // re-entry guard
+    submittingRef.current = true;
     setLoading(true);
+    setShowConfirmModal(false);
     await new Promise(r => setTimeout(r, 1200));
+    submittingRef.current = false;
     onSuccess();
   };
 
@@ -669,6 +689,7 @@ function UpiPaymentForm({ total, addressSummary, onSuccess, onBack }: { total: n
       total={total}
       paymentMethod="upi"
       addressSummary={addressSummary}
+      submitting={loading}
       onConfirm={doSubmit}
       onCancel={() => { setShowConfirmModal(false); onBack(); }}
     />
@@ -731,6 +752,16 @@ function OrderSummary({ bagTotal, isCOD }: { bagTotal: number; isCOD: boolean })
 function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }: { total: number; bagTotal: number; addressSummary: string; onConfirm: () => void; onBack: () => void }) {
   const [showCodTooltip, setShowCodTooltip] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = React.useRef(false);
+
+  const handleCodConfirm = () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setShowConfirmModal(false);
+    onConfirm();
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -800,8 +831,9 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
         By placing this order, you agree to Aura Farming's T&amp;C
       </div>
 
-      <button className="checkout" type="button" onClick={() => setShowConfirmModal(true)}>
-        Place Order ₹{total.toLocaleString('en-IN')}
+      <button className="checkout" type="button" disabled={submitting} onClick={() => setShowConfirmModal(true)}
+        style={{ opacity: submitting ? 0.65 : 1, cursor: submitting ? 'not-allowed' : 'pointer' }}>
+        {submitting ? 'Placing order…' : `Place Order ₹${total.toLocaleString('en-IN')}`}
       </button>
 
       <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
@@ -813,7 +845,8 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
         total={total}
         paymentMethod="cod"
         addressSummary={addressSummary}
-        onConfirm={() => { setShowConfirmModal(false); onConfirm(); }}
+        submitting={submitting}
+        onConfirm={handleCodConfirm}
         onCancel={() => { setShowConfirmModal(false); onBack(); }}
       />
     </div>

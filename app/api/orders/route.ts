@@ -18,6 +18,10 @@ const DELIVERY_FEE_PREPAID = 0;
 const DELIVERY_FEE_COD = 137;
 const COD_FEE_CHARGE = 19;
 
+// ─── In-memory idempotency guard (prevents double-submit within 15s) ─────────
+const recentSubmissions = new Map<string, number>();
+const DEDUP_WINDOW_MS = 15_000;
+
 export async function POST(req: NextRequest) {
   try {
     const { shipping_name, shipping_address, phone, items, payment_method = 'card' } = await req.json();
@@ -31,6 +35,20 @@ export async function POST(req: NextRequest) {
       headers: await headers()
     });
     const userId = session?.user?.id || null;
+
+    // ─── Deduplication check ─────────────────────────────────────────────────
+    const dedupKey = `${userId ?? 'guest'}|${[...(items as any[])].map(i => i.productId).sort().join(',')}`;
+    const lastSeen = recentSubmissions.get(dedupKey);
+    const now = Date.now();
+    if (lastSeen && now - lastSeen < DEDUP_WINDOW_MS) {
+      console.warn('[orders] Duplicate submission blocked for key:', dedupKey);
+      return NextResponse.json({ error: 'Duplicate order detected — please wait before retrying.' }, { status: 409 });
+    }
+    recentSubmissions.set(dedupKey, now);
+    // Prune stale entries to avoid unbounded growth
+    for (const [k, t] of recentSubmissions) {
+      if (now - t > DEDUP_WINDOW_MS * 2) recentSubmissions.delete(k);
+    }
 
     const orderId = 'AURA-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
