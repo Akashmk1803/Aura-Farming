@@ -1430,7 +1430,7 @@ export default function Storefront() {
           )}
 
           {/* NEXT DROP teaser card — only in Limited view, never counted in badge */}
-          {activeCat === 'limited' && (
+          {(activeCat === 'limited' || activeCat === 'all') && (
             <article
               className="card reveal in"
               data-cat="limited-teaser"
@@ -1501,7 +1501,7 @@ export default function Storefront() {
           )}
 
           {/* CUSTOMIZE teaser card — only in Customize view */}
-          {activeCat === 'customize' && (
+          {(activeCat === 'customize' || activeCat === 'all') && (
             <article
               className="card reveal in"
               data-cat="customize-teaser"
