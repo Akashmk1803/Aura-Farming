@@ -254,7 +254,7 @@ function PayConfirmModal({
               transition: 'border-color .2s, color .2s'
             }}
           >
-            Cancel Payment
+            {paymentMethod === 'cod' ? 'Cancel' : 'Cancel Payment'}
           </button>
         </div>
       </div>
@@ -800,11 +800,11 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
       </div>
 
       <button className="checkout" type="button" onClick={() => setShowConfirmModal(true)}>
-        Confirm Order · Pay ₹{total.toLocaleString('en-IN')} on Delivery
+        Place Order ₹{total.toLocaleString('en-IN')}
       </button>
 
       <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        ← Back to Payment Mode
+        ← Cancel
       </button>
 
       <PayConfirmModal
