@@ -72,6 +72,7 @@ export const orders = sqliteTable('orders', {
   status: text('status').default('pending').notNull(), // 'pending', 'paid', 'pending_cod', 'shipped', 'out_for_delivery', 'delivered', 'returned'
   paymentMethod: text('payment_method').default('card'), // 'card', 'upi', 'cod'
   refundAmount: integer('refund_amount'), // set when status = 'returned' on prepaid orders
+  phone: text('phone').default('').notNull(),
   createdAt: text('created_at').default('CURRENT_TIMESTAMP'),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
 });

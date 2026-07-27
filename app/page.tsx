@@ -294,6 +294,7 @@ export default function Storefront() {
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
   const [checkoutName, setCheckoutName] = useState('');
   const [checkoutAddress, setCheckoutAddress] = useState('');
+  const [checkoutPhone, setCheckoutPhone] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
@@ -614,8 +615,8 @@ export default function Storefront() {
   // Shipping form submit → go to payment method selection
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkoutName || !checkoutAddress) {
-      fly('Recipient name and address are required.');
+    if (!checkoutName || !checkoutAddress || !checkoutPhone) {
+      fly('Recipient name, address, and phone number are required.');
       return;
     }
     setCheckoutStep('payment-method');
@@ -628,6 +629,7 @@ export default function Storefront() {
       const payload = {
         shipping_name: checkoutName,
         shipping_address: checkoutAddress,
+        phone: checkoutPhone,
         payment_method: method,
         items: cart.map(item => ({
           productId: item.pid,
@@ -1803,6 +1805,23 @@ export default function Storefront() {
                   required
                   style={{ background: 'var(--ink)', border: '1px solid var(--hair2)', borderRadius: '12px', color: 'var(--bone)', padding: '12px', fontFamily: 'var(--body)', fontSize: '0.85rem', height: '80px', resize: 'none', outline: 'none' }}
                 />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="foot-label">WhatsApp / Phone Number</label>
+                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ padding: '10px 0 10px 14px', color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--body)', whiteSpace: 'nowrap' }}>+91</span>
+                  <input
+                    type="tel"
+                    value={checkoutPhone}
+                    onChange={(e) => setCheckoutPhone(e.target.value)}
+                    placeholder="9876543210"
+                    required
+                    pattern="[0-9+\-\s]{7,15}"
+                    style={{ padding: '10px 14px 10px 0', flex: 1, width: '100%' }}
+                  />
+                </div>
+                <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', fontStyle: 'italic' }}>Used for order notifications via WhatsApp.</span>
               </div>
 
               <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Choose Payment Method<span className="arr">&rarr;</span></button>

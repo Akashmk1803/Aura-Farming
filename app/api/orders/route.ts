@@ -5,16 +5,17 @@ import { eq, sql } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
 import { createPaymentIntent } from '@/lib/payment';
+import { sendWhatsAppOrderNotification } from '@/lib/whatsapp';
 
 const PREPAID_METHODS = ['card', 'upi'];
 const COD_FEE = 199; // always charged for COD regardless of order total
 
 export async function POST(req: NextRequest) {
   try {
-    const { shipping_name, shipping_address, items, payment_method = 'card' } = await req.json();
+    const { shipping_name, shipping_address, phone, items, payment_method = 'card' } = await req.json();
 
-    if (!shipping_name || !shipping_address || !items || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: 'Shipping details and items are required.' }, { status: 400 });
+    if (!shipping_name || !shipping_address || !phone || !items || !Array.isArray(items) || items.length === 0) {
+      return NextResponse.json({ error: 'Shipping details, phone number, and items are required.' }, { status: 400 });
     }
 
     // Retrieve session user using Better Auth
@@ -62,6 +63,8 @@ export async function POST(req: NextRequest) {
     const shippingFee = isCOD ? COD_FEE : 0; // prepaid = always free
     const total = subtotal + shippingFee;
 
+    const itemsSummary = validatedItems.map(item => `${item.name} (${item.size}) x${item.quantity}`).join(', ');
+
     // ─── PHASE 2: COD path — skip payment intent ──────────────────────────
     if (isCOD) {
       db.transaction((tx) => {
@@ -70,6 +73,7 @@ export async function POST(req: NextRequest) {
           userId,
           shippingName: shipping_name,
           shippingAddress: shipping_address,
+          phone,
           subtotal,
           shippingFee,
           total,
@@ -90,6 +94,20 @@ export async function POST(req: NextRequest) {
           tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
         }
       });
+
+      // Fire WhatsApp notification trigger for COD order
+      try {
+        await sendWhatsAppOrderNotification(phone, {
+          orderId,
+          itemsSummary,
+          total,
+          paymentMethod: 'cod',
+          shippingAddress: shipping_address,
+          recipientName: shipping_name
+        });
+      } catch (waError) {
+        console.error('Failed to trigger WhatsApp notification for COD:', waError);
+      }
 
       return NextResponse.json(
         { orderId, subtotal, shippingFee, total, cod: true, status: 'pending_cod' },
@@ -120,6 +138,7 @@ export async function POST(req: NextRequest) {
         userId,
         shippingName: shipping_name,
         shippingAddress: shipping_address,
+        phone,
         subtotal,
         shippingFee,
         total,
@@ -141,6 +160,20 @@ export async function POST(req: NextRequest) {
         tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
       }
     });
+
+    // Fire WhatsApp notification trigger for prepaid order
+    try {
+      await sendWhatsAppOrderNotification(phone, {
+        orderId,
+        itemsSummary,
+        total,
+        paymentMethod: payment_method,
+        shippingAddress: shipping_address,
+        recipientName: shipping_name
+      });
+    } catch (waError) {
+      console.error('Failed to trigger WhatsApp notification for prepaid:', waError);
+    }
 
     return NextResponse.json(
       { orderId, subtotal, shippingFee, total, clientSecret: paymentIntent.client_secret, mock: paymentIntent.mock, status: paymentIntent.mock ? 'paid' : 'pending' },
