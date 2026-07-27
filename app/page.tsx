@@ -254,7 +254,7 @@ function PayConfirmModal({
               transition: 'border-color .2s, color .2s'
             }}
           >
-            Go Back
+            Cancel Payment
           </button>
         </div>
       </div>
@@ -416,7 +416,7 @@ function MockPaymentForm({ total, shippingName, addressSummary, onSuccess, onBac
         paymentMethod="card"
         addressSummary={addressSummary}
         onConfirm={doSubmit}
-        onCancel={() => setShowConfirmModal(false)}
+        onCancel={() => { setShowConfirmModal(false); onBack(); }}
       />
     </>
   );
@@ -539,7 +539,7 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSum
       paymentMethod="card"
       addressSummary={addressSummary}
       onConfirm={doStripeSubmit}
-      onCancel={() => setShowConfirmModal(false)}
+      onCancel={() => { setShowConfirmModal(false); onBack(); }}
     />
     </>
   );
@@ -669,7 +669,7 @@ function UpiPaymentForm({ total, addressSummary, onSuccess, onBack }: { total: n
       paymentMethod="upi"
       addressSummary={addressSummary}
       onConfirm={doSubmit}
-      onCancel={() => setShowConfirmModal(false)}
+      onCancel={() => { setShowConfirmModal(false); onBack(); }}
     />
     </>
   );
@@ -813,7 +813,7 @@ function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }
         paymentMethod="cod"
         addressSummary={addressSummary}
         onConfirm={() => { setShowConfirmModal(false); onConfirm(); }}
-        onCancel={() => setShowConfirmModal(false)}
+        onCancel={() => { setShowConfirmModal(false); onBack(); }}
       />
     </div>
   );
