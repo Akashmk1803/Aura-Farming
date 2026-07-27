@@ -6,7 +6,17 @@ import { Elements, useStripe, useElements, CardNumberElement, CardExpiryElement,
 import { authClient } from '@/lib/auth-client';
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_51NpxXhSFg0WkGypYwK8j7h6g5f4d3s2a1qW2e3r4t5y6u7i8o9p0AURA');
-const COD_FEE = 199; // Cash on Delivery always charges this handling fee
+
+// ─── Fee constants — mirrored exactly in app/api/orders/route.ts ─────────────
+// Card/UPI: 20 + 0 + 23 + 0   = ₹43 extra on top of bag total
+// COD:      20 + 137 + 23 + 19 = ₹199 extra on top of bag total
+const CONVENIENCE_FEE = 20;
+const PLATFORM_FEE    = 23;
+const DELIVERY_FEE_PREPAID = 0;
+const DELIVERY_FEE_COD     = 137;
+const COD_FEE_CHARGE       = 19;
+// kept for any legacy reference
+const COD_FEE = CONVENIENCE_FEE + DELIVERY_FEE_COD + PLATFORM_FEE + COD_FEE_CHARGE; // 199
 
 // Hardcoded premium SVG models exactly matching client catalog designs
 const SVGS = {
@@ -533,6 +543,140 @@ function UpiPaymentForm({ total, onSuccess, onBack }: { total: number; onSuccess
   );
 }
 
+// ─── Shared order summary breakdown shown above all payment forms ─────────────
+function OrderSummary({ bagTotal, isCOD }: { bagTotal: number; isCOD: boolean }) {
+  const deliveryFee  = isCOD ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID;
+  const codFeeAmt    = isCOD ? COD_FEE_CHARGE : 0;
+  const orderTotal   = bagTotal + CONVENIENCE_FEE + PLATFORM_FEE + deliveryFee + codFeeAmt;
+
+  const rows: Array<{ label: string; value?: string; deliveryFree?: boolean; green?: boolean; bold?: boolean }> = [
+    { label: 'Bag Total',       value: `₹${bagTotal.toLocaleString('en-IN')}` },
+    { label: 'Bag Discount',    value: '₹0', green: true },
+    { label: 'Convenience Fee', value: `₹${CONVENIENCE_FEE}` },
+    { label: 'Delivery Fee',    deliveryFree: !isCOD, value: isCOD ? `₹${DELIVERY_FEE_COD}` : undefined },
+    { label: 'Platform Fee',    value: `₹${PLATFORM_FEE}` },
+    ...(isCOD ? [{ label: 'Cash on Delivery Fee', value: `₹${COD_FEE_CHARGE}` }] : []),
+  ];
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid var(--hair2)',
+      borderRadius: '10px',
+      padding: '12px 14px',
+      marginBottom: '14px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px'
+    }}>
+      <div style={{ color: 'var(--dim2)', fontFamily: 'var(--disp)', fontSize: '0.58rem', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '4px' }}>
+        Order Summary
+      </div>
+      {rows.map(row => (
+        <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
+          <span>{row.label}</span>
+          {row.deliveryFree ? (
+            <span>
+              <s style={{ marginRight: '4px', opacity: 0.45, fontSize: '0.65rem' }}>₹49</s>
+              <span style={{ color: '#4caf78', fontWeight: 700 }}>FREE</span>
+            </span>
+          ) : (
+            <span style={{ color: row.green ? '#4caf78' : 'var(--bone)' }}>{row.value}</span>
+          )}
+        </div>
+      ))}
+      <div style={{ height: '1px', background: 'var(--hair2)', margin: '4px 0' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--bone)', fontFamily: 'var(--disp)', letterSpacing: '0.04em' }}>
+        <span>Order Total</span>
+        <span style={{ fontWeight: 700 }}>₹{orderTotal.toLocaleString('en-IN')}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── COD payment screen ───────────────────────────────────────────────────────
+function CodPaymentScreen({ total, bagTotal, onConfirm, onBack }: { total: number; bagTotal: number; onConfirm: () => void; onBack: () => void }) {
+  const [showCodTooltip, setShowCodTooltip] = useState(false);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Header block */}
+      <div style={{
+        background: 'var(--ink)',
+        border: '1px solid var(--hair2)',
+        borderRadius: '12px',
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '1.4rem' }}>📦</span>
+          <div>
+            <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              Cash on Delivery
+            </div>
+            <div style={{ color: 'var(--dim)', fontSize: '0.7rem', marginTop: '2px', fontFamily: 'var(--body)', lineHeight: 1.4 }}>
+              For safe, contactless and hassle free delivery, pay using card/wallet/netbanking
+            </div>
+          </div>
+        </div>
+
+        {/* COD fee note with tooltip */}
+        <div style={{
+          background: 'rgba(225,6,0,0.05)',
+          border: '1px solid rgba(225,6,0,0.18)',
+          borderRadius: '8px',
+          padding: '8px 12px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          position: 'relative'
+        }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
+            ₹{COD_FEE_CHARGE} will be charged additional for Cash on Delivery
+          </span>
+          <span
+            onClick={() => setShowCodTooltip(!showCodTooltip)}
+            onMouseEnter={() => setShowCodTooltip(true)}
+            onMouseLeave={() => setShowCodTooltip(false)}
+            style={{ fontSize: '0.62rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em', flexShrink: 0, marginLeft: '8px' }}
+          >
+            What's this?
+          </span>
+          {showCodTooltip && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+              background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
+              padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '200px', pointerEvents: 'none',
+              lineHeight: 1.4, fontFamily: 'var(--body)'
+            }}>
+              This ₹{COD_FEE_CHARGE} fee covers COD handling costs — packaging, verification, and doorstep cash collection logistics.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Order summary breakdown */}
+      <OrderSummary bagTotal={bagTotal} isCOD={true} />
+
+      {/* T&C */}
+      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', fontFamily: 'var(--body)' }}>
+        By placing this order, you agree to Aura Farming's T&amp;C
+      </div>
+
+      <button className="checkout" type="button" onClick={onConfirm}>
+        Confirm Order · Pay ₹{total.toLocaleString('en-IN')} on Delivery
+      </button>
+
+      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
+        ← Back to Payment Mode
+      </button>
+    </div>
+  );
+}
+
 export default function Storefront() {
   const splitWord = (word: string, rowIndex: number) => {
     return word.split('').map((char, charIndex) => {
@@ -617,6 +761,7 @@ export default function Storefront() {
   const [clientSecret, setClientSecret] = useState('');
   const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
+  const [checkoutBagTotal, setCheckoutBagTotal] = useState(0); // pre-fee subtotal for OrderSummary
   const [isMockPayment, setIsMockPayment] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
 
@@ -1093,20 +1238,17 @@ export default function Storefront() {
       }
 
       if (method === 'cod') {
-        // COD: skip card form, go straight to confirmation
-        setCart([]);
-        updateLocalStorage([]);
-        setCheckoutStep('cart');
-        setCartOpen(false);
-        fly('Order placed! Cash on Delivery — pay ₹' + data.total.toLocaleString('en-IN') + ' upon arrival.');
-        fetchOrders();
-        setAuthMode('profile');
-        setTimeout(() => setAuthOpen(true), 1200);
+        // COD: show the COD info screen (part of 'payment' step) instead of confirming immediately
+        setCheckoutTotal(data.total);
+        setCheckoutBagTotal(data.subtotal);
+        setCheckoutOrderId(data.orderId);
+        setCheckoutStep('payment');
       } else {
         // Card or UPI: go to payment form
         setClientSecret(data.clientSecret);
         setCheckoutOrderId(data.orderId);
         setCheckoutTotal(data.total);
+        setCheckoutBagTotal(data.subtotal);
         setIsMockPayment(!!data.mock);
         setCheckoutStep('payment');
       }
@@ -1184,10 +1326,14 @@ export default function Storefront() {
   // Helper properties
   const cartQty = cart.reduce((a, c) => a + c.qty, 0);
   const cartSubtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
-  // Shipping fee is payment-method-aware:
-  // COD = always ₹199 (extra handling), Prepaid (card/upi) = always FREE
-  const cartShippingFee = selectedPaymentMethod === 'cod' ? (cartQty === 0 ? 0 : COD_FEE) : 0;
-  const cartTotal = cartSubtotal + cartShippingFee;
+  const isCODSelected = selectedPaymentMethod === 'cod';
+  // Derived fee breakdown for the cart summary
+  const cartDeliveryFee = (cartQty === 0) ? 0 : (isCODSelected ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID);
+  const cartCodFee      = (cartQty === 0) ? 0 : (isCODSelected ? COD_FEE_CHARGE : 0);
+  const cartConvFee     = cartQty === 0 ? 0 : CONVENIENCE_FEE;
+  const cartPlatFee     = cartQty === 0 ? 0 : PLATFORM_FEE;
+  const cartShippingFee = cartDeliveryFee; // legacy
+  const cartTotal = cartSubtotal + cartConvFee + cartPlatFee + cartDeliveryFee + cartCodFee;
 
   const updateLocalStorage = (newCart: CartItem[]) => {
     try {
@@ -2201,9 +2347,32 @@ export default function Storefront() {
               )}
             </div>
             <div className="cart-foot">
-              <div className="cart-row"><span>Subtotal</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
-              <div className="cart-row"><span>Shipping</span><span>{cartShippingFee === 0 ? 'Free' : `₹${cartShippingFee}`}</span></div>
-              <div className="cart-row total"><span>Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b></div>
+              {cart.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+                  {([
+                    { label: 'Bag Total',       value: `₹${cartSubtotal.toLocaleString('en-IN')}`,   dim: false },
+                    { label: 'Bag Discount',    value: '₹0',                                          dim: true  },
+                    { label: 'Convenience Fee', value: `₹${CONVENIENCE_FEE}`,                         dim: true  },
+                    { label: 'Delivery Fee',    value: isCODSelected ? `₹${DELIVERY_FEE_COD}` : null, deliveryFree: !isCODSelected, dim: true },
+                    { label: 'Platform Fee',    value: `₹${PLATFORM_FEE}`,                            dim: true  },
+                    ...(isCODSelected ? [{ label: 'Cash on Delivery Fee', value: `₹${COD_FEE_CHARGE}`, dim: true }] : []),
+                  ] as Array<{ label: string; value: string | null; dim: boolean; deliveryFree?: boolean }>).map((row) => (
+                    <div key={row.label} className="cart-row" style={{ fontSize: '0.75rem', color: row.dim ? 'var(--dim)' : 'var(--bone)' }}>
+                      <span>{row.label}</span>
+                      {row.deliveryFree ? (
+                        <span style={{ color: 'var(--dim)' }}>
+                          <s style={{ marginRight: '4px', opacity: 0.5 }}>₹49</s>
+                          <span style={{ color: '#4caf78', fontWeight: 600 }}>FREE</span>
+                        </span>
+                      ) : (
+                        <span style={{ color: row.label === 'Bag Discount' ? '#4caf78' : 'inherit' }}>{row.value}</span>
+                      )}
+                    </div>
+                  ))}
+                  <div style={{ height: '1px', background: 'var(--hair2)', margin: '4px 0' }} />
+                </div>
+              )}
+              <div className="cart-row total"><span>Order Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b></div>
               <button className="checkout" disabled={cart.length === 0} onClick={async () => {
                 if (!user) {
                   setCartOpen(false);
@@ -2637,42 +2806,44 @@ export default function Storefront() {
               <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              {selectedPaymentMethod === 'upi' ? (
-                <UpiPaymentForm
+              {selectedPaymentMethod === 'cod' ? (
+                <CodPaymentScreen
                   total={checkoutTotal}
+                  bagTotal={checkoutBagTotal}
                   onBack={() => setCheckoutStep('payment-method')}
-                  onSuccess={() => {
+                  onConfirm={() => {
                     setCart([]);
                     updateLocalStorage([]);
                     setCheckoutStep('cart');
                     setCartOpen(false);
-                    fly('Payment received successfully. Order initialized.');
+                    fly('Order placed! Cash on Delivery — pay ₹' + checkoutTotal.toLocaleString('en-IN') + ' upon arrival.');
                     fetchOrders();
                     setAuthMode('profile');
                     setTimeout(() => setAuthOpen(true), 1200);
                   }}
                 />
+              ) : selectedPaymentMethod === 'upi' ? (
+                <>
+                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                  <UpiPaymentForm
+                    total={checkoutTotal}
+                    onBack={() => setCheckoutStep('payment-method')}
+                    onSuccess={() => {
+                      setCart([]);
+                      updateLocalStorage([]);
+                      setCheckoutStep('cart');
+                      setCartOpen(false);
+                      fly('Payment received successfully. Order initialized.');
+                      fetchOrders();
+                      setAuthMode('profile');
+                      setTimeout(() => setAuthOpen(true), 1200);
+                    }}
+                  />
+                </>
               ) : isMockPayment ? (
-                <MockPaymentForm
-                  total={checkoutTotal}
-                  shippingName={checkoutName}
-                  onBack={() => setCheckoutStep('payment-method')}
-                  onSuccess={() => {
-                    setCart([]);
-                    updateLocalStorage([]);
-                    setCheckoutStep('cart');
-                    setCartOpen(false);
-                    fly('Payment received successfully. Order initialized.');
-                    fetchOrders();
-                    setAuthMode('profile');
-                    setTimeout(() => setAuthOpen(true), 1200);
-                  }}
-                />
-              ) : (
-                <Elements stripe={stripePromise} options={{ clientSecret }}>
-                  <RealStripeForm
-                    clientSecret={clientSecret}
-                    orderId={checkoutOrderId}
+                <>
+                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                  <MockPaymentForm
                     total={checkoutTotal}
                     shippingName={checkoutName}
                     onBack={() => setCheckoutStep('payment-method')}
@@ -2687,7 +2858,30 @@ export default function Storefront() {
                       setTimeout(() => setAuthOpen(true), 1200);
                     }}
                   />
-                </Elements>
+                </>
+              ) : (
+                <>
+                  <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
+                  <Elements stripe={stripePromise} options={{ clientSecret }}>
+                    <RealStripeForm
+                      clientSecret={clientSecret}
+                      orderId={checkoutOrderId}
+                      total={checkoutTotal}
+                      shippingName={checkoutName}
+                      onBack={() => setCheckoutStep('payment-method')}
+                      onSuccess={() => {
+                        setCart([]);
+                        updateLocalStorage([]);
+                        setCheckoutStep('cart');
+                        setCartOpen(false);
+                        fly('Payment received successfully. Order initialized.');
+                        fetchOrders();
+                        setAuthMode('profile');
+                        setTimeout(() => setAuthOpen(true), 1200);
+                      }}
+                    />
+                  </Elements>
+                </>
               )}
             </div>
           </>

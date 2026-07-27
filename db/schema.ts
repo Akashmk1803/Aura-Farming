@@ -67,7 +67,12 @@ export const orders = sqliteTable('orders', {
   shippingName: text('shipping_name').notNull(),
   shippingAddress: text('shipping_address').notNull(),
   subtotal: integer('subtotal').notNull(),
-  shippingFee: integer('shipping_fee').notNull(),
+  // Fee breakdown — stored individually so admin/tracking views can display the full receipt
+  convenienceFee: integer('convenience_fee').default(0).notNull(),
+  platformFee: integer('platform_fee').default(0).notNull(),
+  deliveryFee: integer('delivery_fee').default(0).notNull(),
+  codFee: integer('cod_fee').default(0).notNull(),
+  shippingFee: integer('shipping_fee').notNull(), // legacy col — equals deliveryFee, kept for compat
   total: integer('total').notNull(),
   status: text('status').default('pending').notNull(), // 'pending', 'paid', 'pending_cod', 'shipped', 'out_for_delivery', 'delivered', 'returned'
   paymentMethod: text('payment_method').default('card'), // 'card', 'upi', 'cod'

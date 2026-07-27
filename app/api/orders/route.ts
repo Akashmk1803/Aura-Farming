@@ -8,7 +8,15 @@ import { createPaymentIntent } from '@/lib/payment';
 import { sendWhatsAppOrderNotification } from '@/lib/whatsapp';
 
 const PREPAID_METHODS = ['card', 'upi'];
-const COD_FEE = 199; // always charged for COD regardless of order total
+
+// ─── Fee constants (must mirror the UI's order summary exactly) ──────────────
+// Card/UPI: 20 + 0 + 23 + 0  = ₹43 extra
+// COD:      20 + 137 + 23 + 19 = ₹199 extra
+const CONVENIENCE_FEE = 20;
+const PLATFORM_FEE = 23;
+const DELIVERY_FEE_PREPAID = 0;
+const DELIVERY_FEE_COD = 137;
+const COD_FEE_CHARGE = 19;
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,7 +34,7 @@ export async function POST(req: NextRequest) {
 
     const orderId = 'AURA-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
-    // ─── PHASE 1: Synchronous stock validation & total calculation ───────────
+    // ─── PHASE 1: Synchronous stock validation & subtotal ────────────────────
     let subtotal = 0;
     const validatedItems: {
       productId: string;
@@ -57,15 +65,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ─── Shipping fee: FREE for prepaid (Card/UPI), ₹199 always for COD ────
+    // ─── Fee breakdown (mirrored exactly from UI OrderSummary) ───────────────
     const isCOD = payment_method === 'cod';
     const isPrepaid = PREPAID_METHODS.includes(payment_method);
-    const shippingFee = isCOD ? COD_FEE : 0; // prepaid = always free
-    const total = subtotal + shippingFee;
+
+    const convenienceFee = CONVENIENCE_FEE;
+    const platformFee = PLATFORM_FEE;
+    const deliveryFee = isCOD ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID;
+    const codFee = isCOD ? COD_FEE_CHARGE : 0;
+    const shippingFee = deliveryFee; // legacy compat column
+
+    const total = subtotal + convenienceFee + platformFee + deliveryFee + codFee;
 
     const itemsSummary = validatedItems.map(item => `${item.name} (${item.size}) x${item.quantity}`).join(', ');
 
-    // ─── PHASE 2: COD path — skip payment intent ──────────────────────────
+    // ─── PHASE 2 (COD): skip payment intent, go straight to confirmation ─────
     if (isCOD) {
       db.transaction((tx) => {
         tx.insert(orders).values({
@@ -75,6 +89,10 @@ export async function POST(req: NextRequest) {
           shippingAddress: shipping_address,
           phone,
           subtotal,
+          convenienceFee,
+          platformFee,
+          deliveryFee,
+          codFee,
           shippingFee,
           total,
           status: 'pending_cod',
@@ -110,12 +128,12 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { orderId, subtotal, shippingFee, total, cod: true, status: 'pending_cod' },
+        { orderId, subtotal, convenienceFee, platformFee, deliveryFee, codFee, shippingFee, total, cod: true, status: 'pending_cod' },
         { status: 201 }
       );
     }
 
-    // ─── PHASE 2 (prepaid): Payment intent (real Stripe or mock) ─────────
+    // ─── PHASE 2 (prepaid): create payment intent (real Stripe or mock) ──────
     let paymentIntent;
     try {
       paymentIntent = await createPaymentIntent(
@@ -131,7 +149,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ─── PHASE 3: Synchronous DB transaction (no async, no await) ────────────
+    // ─── PHASE 3: Synchronous DB transaction ─────────────────────────────────
     db.transaction((tx) => {
       tx.insert(orders).values({
         id: orderId,
@@ -140,6 +158,10 @@ export async function POST(req: NextRequest) {
         shippingAddress: shipping_address,
         phone,
         subtotal,
+        convenienceFee,
+        platformFee,
+        deliveryFee,
+        codFee,
         shippingFee,
         total,
         status: paymentIntent.mock ? 'paid' : 'pending',
@@ -176,7 +198,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { orderId, subtotal, shippingFee, total, clientSecret: paymentIntent.client_secret, mock: paymentIntent.mock, status: paymentIntent.mock ? 'paid' : 'pending' },
+      { orderId, subtotal, convenienceFee, platformFee, deliveryFee, codFee, shippingFee, total, clientSecret: paymentIntent.client_secret, mock: paymentIntent.mock, status: paymentIntent.mock ? 'paid' : 'pending' },
       { status: 201 }
     );
   } catch (error: any) {

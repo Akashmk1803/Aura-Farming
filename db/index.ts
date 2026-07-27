@@ -87,7 +87,11 @@ sqlite.exec(`
     shipping_name TEXT NOT NULL,
     shipping_address TEXT NOT NULL,
     subtotal INTEGER NOT NULL,
-    shipping_fee INTEGER NOT NULL,
+    convenience_fee INTEGER NOT NULL DEFAULT 0,
+    platform_fee INTEGER NOT NULL DEFAULT 0,
+    delivery_fee INTEGER NOT NULL DEFAULT 0,
+    cod_fee INTEGER NOT NULL DEFAULT 0,
+    shipping_fee INTEGER NOT NULL DEFAULT 0,
     total INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -125,7 +129,11 @@ try { sqlite.exec(`ALTER TABLE products ADD COLUMN is_customizable INTEGER NOT N
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'card'`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN refund_amount INTEGER`); } catch (_) {}
 try { sqlite.exec(`ALTER TABLE orders ADD COLUMN phone TEXT DEFAULT '' NOT NULL`); } catch (_) {}
-
+// Fee breakdown columns — added after initial schema, safe to re-run
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN convenience_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN platform_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN delivery_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+try { sqlite.exec(`ALTER TABLE orders ADD COLUMN cod_fee INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
 // Create addresses table if not exists
 try {
   sqlite.exec(`
