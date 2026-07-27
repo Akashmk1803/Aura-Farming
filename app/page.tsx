@@ -465,11 +465,12 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSum
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <CardVisualizer
-        cardHolder={cardHolder}
-        cardFlipped={cardFlipped}
-        cardBrand={cardBrand}
+    <>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <CardVisualizer
+          cardHolder={cardHolder}
+          cardFlipped={cardFlipped}
+          cardBrand={cardBrand}
         onFlipToggle={() => setCardFlipped(!cardFlipped)}
       />
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -540,6 +541,7 @@ function RealStripeForm({ clientSecret, orderId, total, shippingName, addressSum
       onConfirm={doStripeSubmit}
       onCancel={() => setShowConfirmModal(false)}
     />
+    </>
   );
 }
 
@@ -725,8 +727,9 @@ function OrderSummary({ bagTotal, isCOD }: { bagTotal: number; isCOD: boolean })
 }
 
 // ─── COD payment screen ───────────────────────────────────────────────────────
-function CodPaymentScreen({ total, bagTotal, onConfirm, onBack }: { total: number; bagTotal: number; onConfirm: () => void; onBack: () => void }) {
+function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }: { total: number; bagTotal: number; addressSummary: string; onConfirm: () => void; onBack: () => void }) {
   const [showCodTooltip, setShowCodTooltip] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
