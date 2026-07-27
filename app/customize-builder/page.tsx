@@ -358,7 +358,7 @@ export default function CustomizeBuilder() {
                 4. Select Size
               </label>
               <div style={{ display: 'flex', gap: '10px' }}>
-                {['S', 'M', 'L', 'XL'].map(sz => (
+                {['S', 'M', 'L', 'XL', 'XXL'].map(sz => (
                   <button
                     key={sz}
                     onClick={() => setSelectedSize(sz)}

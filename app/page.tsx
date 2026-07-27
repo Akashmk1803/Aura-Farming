@@ -2167,7 +2167,7 @@ export default function Storefront() {
         {/* PRODUCTS GRID */}
         <div className="grid" id="grid">
           {filteredProducts.map(p => {
-            const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL'];
+            const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL'];
             return (
               <article key={p.id} className="card reveal in" data-cat={p.cat} data-pid={p.id}>
                 <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
@@ -3842,7 +3842,7 @@ export default function Storefront() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
                   <span className="foot-label">Select Size</span>
                   <div className="pdetail-sizes">
-                    {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL']).map(s => (
+                    {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL']).map(s => (
                       <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => setDetailSize(s)}>
                         {s}
                       </button>

@@ -267,7 +267,7 @@ h2 .red{color:var(--red)}
 .meta .desc{font-size:.72rem;color:var(--dim2);letter-spacing:.02em;margin-top:3px}
 .price{font-weight:600;font-size:1rem;white-space:nowrap}
 .sizes{display:flex;gap:6px;flex-wrap:wrap}
-.size{width:34px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--hair2);border-radius:8px;font-size:.68rem;font-weight:600;letter-spacing:.04em;color:var(--dim);cursor:pointer;transition:all .25s}
+.size{min-width:34px;padding:0 6px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--hair2);border-radius:8px;font-size:.68rem;font-weight:600;letter-spacing:.04em;color:var(--dim);cursor:pointer;transition:all .25s}
 .size:hover{border-color:var(--bone);color:var(--bone)}
 .size.sel{background:var(--bone);color:var(--ink);border-color:var(--bone)}
 .size.sel:hover{background:var(--bone);color:var(--ink);border-color:var(--bone)}
