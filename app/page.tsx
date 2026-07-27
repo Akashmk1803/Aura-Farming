@@ -1506,7 +1506,7 @@ export default function Storefront() {
               className="card reveal in"
               data-cat="customize-teaser"
               style={{ cursor: 'pointer', opacity: 1 }}
-              onClick={() => window.location.href = '/customize-builder'}
+              onClick={() => fly('Customization is launching soon — stay tuned!')}
             >
               <div className="card-media" style={{ position: 'relative' }}>
                 <span className="tag" style={{ opacity: 0.4 }}>DIY / —</span>
