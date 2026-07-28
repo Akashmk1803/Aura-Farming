@@ -369,30 +369,6 @@ export default function Storefront() {
     }
   }, [toastShow]);
 
-  const fetchOrders = async () => {
-    try {
-      const res = await fetch('/api/orders/my-orders');
-      if (res.ok) {
-        const data = await res.json();
-        setUserOrders(data);
-      }
-    } catch (err) {
-      console.error('Error loading orders:', err);
-    }
-  };
-
-  const fetchWishlist = async () => {
-    try {
-      const res = await fetch('/api/wishlist');
-      if (res.ok) {
-        const data = await res.json();
-        setWishlistItems(data);
-      }
-    } catch (err) {
-      console.error('Error loading wishlist:', err);
-    }
-  };
-
   // Load catalog products from database
   useEffect(() => {
     fetch('/api/products')
@@ -436,6 +412,31 @@ export default function Storefront() {
       if (storedHistory) setSearchHistory(JSON.parse(storedHistory));
     } catch (_) { }
   }, []);
+
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch('/api/orders/my-orders');
+      if (res.ok) {
+        const data = await res.json();
+        setUserOrders(data);
+      }
+    } catch (err) {
+      console.error('Error loading orders:', err);
+    }
+  };
+
+  const fetchWishlist = async () => {
+    try {
+      const res = await fetch('/api/wishlist');
+      if (res.ok) {
+        const data = await res.json();
+        setWishlistItems(data);
+      }
+    } catch (err) {
+      console.error('Error loading wishlist:', err);
+    }
+  };
+
   const fetchAdminStats = async () => {
     try {
       const res = await fetch('/api/admin/stats');
