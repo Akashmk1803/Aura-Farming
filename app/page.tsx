@@ -67,6 +67,33 @@ function groupOrdersByDay<T extends Record<string, any>>(orders: T[]): { bucket:
   return Array.from(bucketMap.entries()).map(([bucket, items]) => ({ bucket, items }));
 }
 
+/** Generate a prefilled WhatsApp support URL for a given order */
+function generateWhatsAppSupportUrl(order: any): string {
+  const itemsText = (order.items || [])
+    .map((item: any) => `- ${item.name} (Size: ${item.size})`)
+    .join('\n');
+
+  const text = `Hello Aura Farming,
+
+I need help with my order.
+
+Order ID:
+${order.id}
+
+Product(s):
+${itemsText}
+
+Order Total:
+₹${order.total.toLocaleString('en-IN')}
+
+Issue:
+____________________
+
+Thank you.`;
+
+  return `https://wa.me/918310247811?text=${encodeURIComponent(text)}`;
+}
+
 interface Product {
   id: string;
   name: string;
@@ -424,6 +451,20 @@ export default function Storefront() {
 
   // Load catalog products from database
   useEffect(() => {
+    // Check if returning from email verification redirect
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('verified') === 'true') {
+        setTimeout(() => {
+          setAuthMode('login');
+          setAuthOpen(true);
+          fly('Email verified successfully. Please log in.');
+        }, 500);
+        url.searchParams.delete('verified');
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
+
     fetch('/api/products')
       .then(res => res.json())
       .then(data => {
@@ -619,19 +660,15 @@ export default function Storefront() {
     const { data, error } = await authClient.signUp.email({
       name: regName,
       email: regEmail,
-      password: regPassword
+      password: regPassword,
+      callbackURL: '/?verified=true'
     });
 
     if (error) {
       fly(error.message || 'Registration failed.');
     } else {
-      setUser(data.user);
-      setUpdateName(data.user.name);
-      setUpdateAddress((data.user as any).shippingAddress || '');
-      fly(`Registration complete. Welcome to Aura Farming, ${data.user.name}`);
-      fetchWishlist();
-      fetchAddresses();
-      setAuthOpen(false);
+      fly('Registration successful. Please verify your email before logging in.');
+      setAuthMode('login');
       setRegName('');
       setRegEmail('');
       setRegPassword('');
@@ -2363,6 +2400,11 @@ export default function Storefront() {
                               <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
                                 Track Progress &rarr;
                               </button>
+                              {order.status === 'delivered' && (
+                                <a href={generateWhatsAppSupportUrl(order)} target="_blank" rel="noopener noreferrer" className="icon-btn" style={{ fontSize: '0.62rem', color: 'var(--dim)', alignSelf: 'flex-start', padding: 0, marginTop: '2px', textDecoration: 'none', display: 'block' }}>
+                                  Help &amp; Returns
+                                </a>
+                              )}
                             </div>
                           );
                         })}
