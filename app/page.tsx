@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
-import { Elements, useStripe, useElements, CardNumberElement, CardExpiryElement, CardCvcElement } from '@stripe/react-stripe-js';
 import { authClient } from '@/lib/auth-client';
 
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_51NpxXhSFg0WkGypYwK8j7h6g5f4d3s2a1qW2e3r4t5y6u7i8o9p0AURA');
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 // Hardcoded premium SVG models exactly matching client catalog designs
 const SVGS = {
@@ -59,217 +61,117 @@ interface Order {
   items: OrderItem[];
 }
 
-interface PaymentFormProps {
-  clientSecret: string;
-  orderId: string;
-  total: number;
+interface RazorpayPaymentFormProps {
+  checkoutData: any;
   shippingName: string;
-  isMock: boolean;
+  shippingAddress: string;
+  phone: string;
+  paymentMethod: string;
   onSuccess: () => void;
   onBack: () => void;
 }
 
-function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock, onSuccess, onBack }: PaymentFormProps) {
-  const stripe = useStripe();
-  const elements = useElements();
+function RazorpayPaymentForm({ checkoutData, shippingName, shippingAddress, phone, paymentMethod, onSuccess, onBack }: RazorpayPaymentFormProps) {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
-  const [cardFlipped, setCardFlipped] = useState(false);
-  const [cardBrand, setCardBrand] = useState('AURA CARD');
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    }
+  }, []);
 
-  // const handleSubmit = async (e: React.FormEvent) => {
-  //   e.preventDefault();
-  //   if (!stripe || !elements) return;
-
-  //   setLoading(true);
-  //   setErrorMessage('');
-
-  //   const cardNumberElement = elements.getElement(CardNumberElement);
-  //   if (!cardNumberElement) return;
-
-  //   const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handlePayment = async () => {
+    if (!window.Razorpay) {
+      setErrorMessage('Razorpay SDK failed to load. Are you online?');
+      return;
+    }
 
     setLoading(true);
     setErrorMessage('');
 
-    // ─── MOCK MODE: skip real Stripe confirmation entirely ───────────
-    if (isMock) {
-      await new Promise(r => setTimeout(r, 700)); // brief fake "processing" delay
-      onSuccess();
-      return;
-    }
-
-    if (!stripe || !elements) return;
-
-    const cardNumberElement = elements.getElement(CardNumberElement);
-    if (!cardNumberElement) return;
-
-    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
-      payment_method: {
-        card: cardNumberElement,
-        billing_details: {
-          name: shippingName,
-        },
+    const options = {
+      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      amount: checkoutData.total * 100,
+      currency: 'INR',
+      name: 'Aura Farming',
+      description: 'Order Payment',
+      order_id: checkoutData.razorpayOrderId,
+      handler: async function (response: any) {
+        try {
+          const verifyRes = await fetch('/api/payment/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              shipping_name: shippingName,
+              shipping_address: shippingAddress,
+              phone: phone,
+              payment_method: paymentMethod,
+              subtotal: checkoutData.subtotal,
+              convenienceFee: checkoutData.convenienceFee,
+              platformFee: checkoutData.platformFee,
+              deliveryFee: checkoutData.deliveryFee,
+              codFee: checkoutData.codFee,
+              shippingFee: checkoutData.shippingFee,
+              total: checkoutData.total,
+              validatedItems: checkoutData.validatedItems
+            })
+          });
+          const verifyData = await verifyRes.json();
+          if (verifyRes.ok) {
+            onSuccess();
+          } else {
+            setErrorMessage(verifyData.error || 'Payment verification failed.');
+            setLoading(false);
+          }
+        } catch (err) {
+          setErrorMessage('Payment verification request failed.');
+          setLoading(false);
+        }
       },
-    });
-
-    if (error) {
-      console.error('[Payment Error]', error);
-      setErrorMessage(error.message || 'Payment initiation failed.');
-      setLoading(false);
-    } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-      // simulated webhook trigger fallback for immediate local validation
-      try {
-        await fetch('/api/webhooks/stripe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'payment_intent.succeeded',
-            data: {
-              object: {
-                id: paymentIntent.id,
-                metadata: { orderId: orderId }
-              }
-            }
-          })
-        });
-      } catch (err) {
-        console.error('Simulated webhook trigger warning:', err);
+      prefill: {
+        name: shippingName,
+        contact: phone
+      },
+      theme: {
+        color: '#e10600'
       }
+    };
 
-      onSuccess();
-    } else {
-      setErrorMessage('Unexpected transaction status.');
+    const rzp = new window.Razorpay(options);
+    rzp.on('payment.failed', function (response: any) {
+      setErrorMessage(response.error.description);
       setLoading(false);
-    }
-  };
-
-  const handleCardNumChange = (event: any) => {
-    if (event.brand) {
-      setCardBrand(event.brand.toUpperCase());
-    }
-  };
-
-  const stripeElementStyle = {
-    style: {
-      base: {
-        color: '#ece8e1',
-        fontFamily: '"Inter Tight", sans-serif',
-        fontSize: '14px',
-        lineHeight: '24px',
-        '::placeholder': {
-          color: '#65625e',
-        },
-      },
-      invalid: {
-        color: '#e10600',
-      },
-    },
+    });
+    rzp.open();
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      {/* 3D Card Visualizer */}
-      <div className="card-wrapper" style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
-        <div style={{
-          width: '100%',
-          height: '100%',
-          position: 'relative',
-          transformStyle: 'preserve-3d',
-          transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-          transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
-        }}>
-
-          {/* Card Front */}
-          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }}></div>
-              <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
-            </div>
-            <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', wordSpacing: '0.1em', color: 'var(--bone)' }}>•••• •••• •••• ••••</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-              <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
-                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
-                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardHolder}</div>
-              </div>
-              <div style={{ flex: '0 0 auto' }}>
-                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>MM/YY</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Card Back */}
-          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }}></div>
-            <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
-                <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
-                <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.05em' }}>•••</div>
-              </div>
-            </div>
-            <div style={{ padding: '0 20px', fontSize: '0.55rem', color: 'var(--dim2)', textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
-          </div>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center', padding: '20px 0' }}>
+      <div style={{ color: 'var(--bone)', fontSize: '1.2rem', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}>
+        Complete Payment
       </div>
-
-      {/* Stripe Secure Inputs */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Card Number</label>
-          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-            <CardNumberElement options={stripeElementStyle} onChange={handleCardNumChange} />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label className="foot-label">Cardholder Name</label>
-          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
-            <input
-              type="text"
-              placeholder="Akash"
-              value={cardHolder}
-              onChange={(e) => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
-              required
-              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">Expiry Date</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardExpiryElement options={stripeElementStyle} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label className="foot-label">CVV / Code</label>
-            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
-              <CardCvcElement
-                options={stripeElementStyle}
-                onFocus={() => setCardFlipped(true)}
-                onBlur={() => setCardFlipped(false)}
-              />
-            </div>
-          </div>
-        </div>
+      <div style={{ color: 'var(--dim)', fontSize: '0.85rem', textAlign: 'center' }}>
+        You will be redirected to Razorpay securely.
       </div>
 
       {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
 
-      <button className="checkout" id="submitPaymentBtn" type="submit" disabled={loading || !stripe}>
-        {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
+      <button className="checkout" id="submitPaymentBtn" type="button" onClick={handlePayment} disabled={loading} style={{ marginTop: '10px' }}>
+        {loading ? 'Processing...' : `Pay ₹${checkoutData.total.toLocaleString('en-IN')}`}
       </button>
 
-      <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
+      <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '10px auto 0', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
         &larr; Back to Shipping
       </button>
-    </form>
+    </div>
   );
 }
 
@@ -333,10 +235,9 @@ export default function Storefront() {
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment'>('cart');
   const [checkoutName, setCheckoutName] = useState('');
   const [checkoutAddress, setCheckoutAddress] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [checkoutOrderId, setCheckoutOrderId] = useState('');
-  const [checkoutTotal, setCheckoutTotal] = useState(0);
-  const [isMockPayment, setIsMockPayment] = useState(false);
+  const [checkoutPhone, setCheckoutPhone] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
+  const [checkoutData, setCheckoutData] = useState<any>(null);
 
   // Tracking Portal states
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -624,11 +525,11 @@ export default function Storefront() {
     fetchAdminStats();
   };
 
-  // Checkout POST to create pending order and Stripe PaymentIntent
+  // Checkout POST to create pending order (COD) or initialize Razorpay
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkoutName || !checkoutAddress) {
-      fly('Recipient name and address are required.');
+    if (!checkoutName || !checkoutAddress || !checkoutPhone) {
+      fly('Recipient name, phone, and address are required.');
       return;
     }
 
@@ -636,6 +537,8 @@ export default function Storefront() {
       const payload = {
         shipping_name: checkoutName,
         shipping_address: checkoutAddress,
+        phone: checkoutPhone,
+        payment_method: paymentMethod,
         items: cart.map(item => ({
           productId: item.pid,
           size: item.size,
@@ -643,20 +546,36 @@ export default function Storefront() {
         }))
       };
 
-      const res = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setClientSecret(data.clientSecret);
-        setCheckoutOrderId(data.orderId);
-        setCheckoutTotal(data.total);
-        setIsMockPayment(!!data.mock);
-        setCheckoutStep('payment');
+      if (paymentMethod === 'cod') {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCart([]);
+          updateLocalStorage([]);
+          setCheckoutStep('cart');
+          setCartOpen(false);
+          fetchOrders();
+          fly('COD Order Confirmed! Reference: ' + data.orderId);
+        } else {
+          fly(data.error || 'Failed to create COD order');
+        }
       } else {
-        fly(data.error || 'Failed to initialize checkout');
+        const res = await fetch('/api/payment/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setCheckoutData(data);
+          setCheckoutStep('payment');
+        } else {
+          fly(data.error || 'Failed to initialize payment');
+        }
       }
     } catch (err) {
       fly('Checkout connection failed');
@@ -1624,6 +1543,13 @@ export default function Storefront() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="foot-label">Phone Number</label>
+                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
+                  <input type="tel" value={checkoutPhone} onChange={(e) => setCheckoutPhone(e.target.value)} placeholder="9999999999" required style={{ padding: '10px 14px' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label className="foot-label">Coordinates Address</label>
                 <textarea
                   value={checkoutAddress}
@@ -1634,7 +1560,25 @@ export default function Storefront() {
                 />
               </div>
 
-              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Proceed to Payment</button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="foot-label">Payment Method</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
+                    <input type="radio" name="paymentMethod" value="card" checked={paymentMethod === 'card'} onChange={() => setPaymentMethod('card')} />
+                    Card
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
+                    <input type="radio" name="paymentMethod" value="upi" checked={paymentMethod === 'upi'} onChange={() => setPaymentMethod('upi')} />
+                    UPI
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
+                    <input type="radio" name="paymentMethod" value="cod" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} />
+                    Cash on Delivery (₹199 extra)
+                  </label>
+                </div>
+              </div>
+
+              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>{paymentMethod === 'cod' ? 'Place COD Order' : 'Proceed to Payment'}</button>
             </form>
           </>
         ) : (
@@ -1644,13 +1588,13 @@ export default function Storefront() {
               <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              <Elements stripe={stripePromise} options={{ clientSecret }}>
-                <StripePaymentForm
-                  clientSecret={clientSecret}
-                  orderId={checkoutOrderId}
-                  total={checkoutTotal}
+              {checkoutData && (
+                <RazorpayPaymentForm
+                  checkoutData={checkoutData}
                   shippingName={checkoutName}
-                  isMock={isMockPayment}
+                  shippingAddress={checkoutAddress}
+                  phone={checkoutPhone}
+                  paymentMethod={paymentMethod}
                   onBack={() => setCheckoutStep('shipping')}
                   onSuccess={() => {
                     setCart([]);
@@ -1663,7 +1607,7 @@ export default function Storefront() {
                     setTimeout(() => setAuthOpen(true), 1200);
                   }}
                 />
-              </Elements>
+              )}
             </div>
           </>
         )}
