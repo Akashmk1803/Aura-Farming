@@ -110,6 +110,7 @@ export const addresses = sqliteTable('addresses', {
   locality: text('locality').notNull(),
   flatNumber: text('flat_number').notNull(),
   landmark: text('landmark').notNull(),
+  district: text('district').default('').notNull(),
   city: text('city').notNull(),
   state: text('state').notNull(),
   addressType: text('address_type').notNull(), // 'Home', 'Work', 'Others'

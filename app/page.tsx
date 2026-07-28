@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { authClient } from '@/lib/auth-client';
 
 declare global {
@@ -19,6 +20,53 @@ const SVGS = {
   longsleeve: '<svg viewBox="0 0 200 220"><path d="M72 34 Q86 26 100 26 Q114 26 128 34 L158 48 Q168 53 169 64 L176 168 Q177 178 167 179 L150 181 Q142 182 141 173 L138 96 L138 194 Q138 202 130 202 L70 202 Q62 202 62 194 L62 96 L59 173 Q58 182 50 181 L33 179 Q23 178 24 168 L31 64 Q32 53 42 48 Z" fill="#18181b" stroke="#2c2c31" stroke-width="2"/><path d="M86 32 Q100 42 114 32" fill="none" stroke="#2c2c31" stroke-width="2"/><path d="M24 168 L59 166 M141 166 L176 168" stroke="#e10600" stroke-width="2.5"/><circle cx="100" cy="112" r="34" fill="none" stroke="#e10600" stroke-width="2.5"/><svg x="78" y="84" width="44" height="58" viewBox="0 0 100 140" style="color:#e10600"><use href="#rune"/></svg></svg>'
 };
 
+const GARMENT_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+
+/** Safely parse SQLite's CURRENT_TIMESTAMP (no TZ suffix) or an ISO string. */
+function parseSqlDate(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const cleanStr = dateStr.endsWith('Z') ? dateStr : dateStr + ' UTC';
+  const d = new Date(cleanStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Format a Date object as "27 Jul 2026, 3:45 PM" */
+function formatOrderTime(d: Date): string {
+  return d.toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).replace(',', '').replace(/  +/g, ' ');
+}
+
+/** Get day-bucket label: 'Today' | 'Yesterday' | '25 July 2026' */
+function getDayBucket(d: Date): string {
+  const now = new Date();
+  const toMidnight = (dt: Date) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const diffDays = Math.round((toMidnight(now).getTime() - toMidnight(d).getTime()) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/** Group and sort orders newest-first, returning [{bucket, orders}] */
+function groupOrdersByDay<T extends Record<string, any>>(orders: T[]): { bucket: string; items: T[] }[] {
+  // Drizzle ORM returns camelCase keys (createdAt); older manual queries return snake_case (created_at).
+  const getDate = (o: T): Date | null => parseSqlDate(o.createdAt ?? o.created_at ?? '');
+  const sorted = [...orders].sort((a, b) => {
+    const da = getDate(a)?.getTime() ?? 0;
+    const db2 = getDate(b)?.getTime() ?? 0;
+    return db2 - da;
+  });
+  const bucketMap = new Map<string, T[]>();
+  for (const o of sorted) {
+    const d = getDate(o);
+    const bucket = d ? getDayBucket(d) : 'Unknown';
+    if (!bucketMap.has(bucket)) bucketMap.set(bucket, []);
+    bucketMap.get(bucket)!.push(o);
+  }
+  return Array.from(bucketMap.entries()).map(([bucket, items]) => ({ bucket, items }));
+}
+
 interface Product {
   id: string;
   name: string;
@@ -28,6 +76,8 @@ interface Product {
   catLabel: string;
   art: keyof typeof SVGS;
   stock: number;
+  isLimited: boolean;
+  isCustomizable: boolean;
 }
 
 interface CartItem {
@@ -61,6 +111,75 @@ interface Order {
   items: OrderItem[];
 }
 
+interface Address {
+  id: string;
+  name: string;
+  mobile: string;
+  whatsappNumber: string | null;
+  pinCode: string;
+  locality: string;
+  flatNumber: string;
+  landmark: string;
+  city: string;
+  district: string;
+  state: string;
+  addressType: string;
+  isDefault: boolean;
+}
+interface PayConfirmModalProps {
+  isOpen: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  total: number;
+  paymentMethod: string;
+  shippingName: string;
+  shippingAddress: string;
+}
+
+function PayConfirmModal({ isOpen, onCancel, onConfirm, total, paymentMethod, shippingName, shippingAddress }: PayConfirmModalProps) {
+  if (!isOpen) return null;
+  const methodLabel = paymentMethod === 'cod' ? 'Cash on Delivery' : paymentMethod === 'upi' ? 'UPI' : 'Credit / Debit Card';
+  const btnLabel = paymentMethod === 'cod' ? `Place Order ₹${total.toLocaleString('en-IN')}` : `Confirm & Pay ₹${total.toLocaleString('en-IN')}`;
+
+  const shortAddress = shippingAddress.length > 55 ? shippingAddress.substring(0, 52) + '...' : shippingAddress;
+
+  const modalContent = (
+    <div className="modal-overlay" onClick={onCancel} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.75)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', width: '90%', padding: '24px', backgroundColor: 'var(--coal)', borderRadius: '12px', border: '1px solid var(--hair2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h3 style={{ fontFamily: 'var(--disp)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirm Payment</h3>
+          <button onClick={onCancel} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '1.2rem', cursor: 'pointer', padding: 0 }}>&times;</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', color: 'var(--bone)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--hair2)', paddingBottom: '12px' }}>
+            <span style={{ color: 'var(--dim2)', fontSize: '0.9rem' }}>Order Total</span>
+            <strong style={{ fontSize: '1.1rem' }}>₹{total.toLocaleString('en-IN')}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--hair2)', paddingBottom: '12px' }}>
+            <span style={{ color: 'var(--dim2)', fontSize: '0.9rem' }}>Method</span>
+            <span style={{ fontSize: '0.9rem' }}>{methodLabel}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ color: 'var(--dim2)', fontSize: '0.9rem' }}>Delivery To</span>
+            <span style={{ fontSize: '0.9rem' }}>{shippingName}</span>
+            <span style={{ color: 'var(--dim)', fontSize: '0.8rem', lineHeight: '1.4' }}>{shortAddress}</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', marginTop: '32px' }}>
+          <button className="checkout" type="button" onClick={onCancel} style={{ background: 'var(--coal2)', color: 'var(--bone)', border: '1px solid var(--hair)', flex: 1 }}>
+            Cancel
+          </button>
+          <button className="checkout" type="button" onClick={onConfirm} style={{ background: '#e10600', color: '#fff', border: 'none', flex: 1 }}>
+            {btnLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : null;
+}
+
 interface RazorpayPaymentFormProps {
   checkoutData: any;
   shippingName: string;
@@ -74,6 +193,7 @@ interface RazorpayPaymentFormProps {
 function RazorpayPaymentForm({ checkoutData, shippingName, shippingAddress, phone, paymentMethod, onSuccess, onBack }: RazorpayPaymentFormProps) {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     const script = document.createElement('script');
@@ -164,13 +284,26 @@ function RazorpayPaymentForm({ checkoutData, shippingName, shippingAddress, phon
 
       {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
 
-      <button className="checkout" id="submitPaymentBtn" type="button" onClick={handlePayment} disabled={loading} style={{ marginTop: '10px' }}>
+      <button className="checkout" id="submitPaymentBtn" type="button" onClick={() => setConfirmOpen(true)} disabled={loading} style={{ marginTop: '10px' }}>
         {loading ? 'Processing...' : `Pay ₹${checkoutData.total.toLocaleString('en-IN')}`}
       </button>
 
       <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '10px auto 0', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
         &larr; Back to Shipping
       </button>
+
+      <PayConfirmModal
+        isOpen={confirmOpen}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          handlePayment();
+        }}
+        total={checkoutData.total}
+        paymentMethod={paymentMethod}
+        shippingName={shippingName}
+        shippingAddress={shippingAddress}
+      />
     </div>
   );
 }
@@ -230,14 +363,33 @@ export default function Storefront() {
   // Details Modal states
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [detailSize, setDetailSize] = useState('M');
+  const [detailOpenedFromWishlist, setDetailOpenedFromWishlist] = useState(false);
 
   // Checkout Wizard states
-  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment'>('cart');
-  const [checkoutName, setCheckoutName] = useState('');
-  const [checkoutAddress, setCheckoutAddress] = useState('');
-  const [checkoutPhone, setCheckoutPhone] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
+  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
+  const [paymentMethod, setPaymentMethod] = useState<'card' | 'upi' | 'netbanking' | 'wallet' | 'emi' | 'cod'>('card');
   const [checkoutData, setCheckoutData] = useState<any>(null);
+  const [codConfirmOpen, setCodConfirmOpen] = useState(false);
+
+  // Address flow states
+  const [userAddresses, setUserAddresses] = useState<Address[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState('');
+  const [addressFormMode, setAddressFormMode] = useState<'selection' | 'edit'>('selection');
+  const [editingAddressId, setEditingAddressId] = useState('');
+
+  // Address form fields
+  const [addrName, setAddrName] = useState('');
+  const [addrMobile, setAddrMobile] = useState('');
+  const [addrWhatsapp, setAddrWhatsapp] = useState('');
+  const [addrPin, setAddrPin] = useState('');
+  const [addrFlat, setAddrFlat] = useState('');
+  const [addrLocality, setAddrLocality] = useState('');
+  const [addrLandmark, setAddrLandmark] = useState('');
+  const [addrCity, setAddrCity] = useState('');
+  const [addrDistrict, setAddrDistrict] = useState('');
+  const [addrState, setAddrState] = useState('');
+  const [addrType, setAddrType] = useState('Home');
+  const [addrIsDefault, setAddrIsDefault] = useState(false);
 
   // Tracking Portal states
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -283,7 +435,9 @@ export default function Storefront() {
           cat: item.category,
           catLabel: item.categoryLabel || item.category_label,
           art: (item.artSvgKey || item.art_svg_key) as any,
-          stock: item.stock
+          stock: item.stock,
+          isLimited: Boolean(item.isLimited || item.is_limited),
+          isCustomizable: Boolean(item.isCustomizable || item.is_customizable)
         }));
         setProductsList(formatted);
       })
@@ -298,6 +452,7 @@ export default function Storefront() {
           setUpdateAddress((res.data.user as any).shippingAddress || '');
           fetchOrders();
           fetchWishlist();
+          fetchAddresses();
         }
       });
 
@@ -338,6 +493,22 @@ export default function Storefront() {
     }
   };
 
+  const fetchAddresses = async () => {
+    try {
+      const res = await fetch('/api/addresses');
+      if (res.ok) {
+        const data = await res.json();
+        setUserAddresses(data);
+        if (data.length > 0) {
+          const defaultAddr = data.find((a: Address) => a.isDefault) || data[0];
+          setSelectedAddressId(defaultAddr.id);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading addresses:', err);
+    }
+  };
+
   const fetchAdminStats = async () => {
     try {
       const res = await fetch('/api/admin/stats');
@@ -350,7 +521,7 @@ export default function Storefront() {
     }
   };
 
-  const toggleWishlist = async (productId: string) => {
+  const toggleWishlist = async (productId: string, size?: string) => {
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -361,7 +532,7 @@ export default function Storefront() {
       const res = await fetch('/api/wishlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId })
+        body: JSON.stringify({ productId, size: size || detailSize || 'M' })
       });
       if (res.ok) {
         const data = await res.json();
@@ -370,6 +541,19 @@ export default function Storefront() {
       }
     } catch (_) {
       fly('Error updating favorites');
+    }
+  };
+
+  const updateWishlistSize = async (productId: string, size: string) => {
+    try {
+      await fetch('/api/wishlist', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId, size })
+      });
+      fetchWishlist();
+    } catch (_) {
+      // silent — non-critical
     }
   };
 
@@ -418,6 +602,7 @@ export default function Storefront() {
       fly(`Initiation authenticated: welcome back, ${data.user.name}`);
       fetchOrders();
       fetchWishlist();
+      fetchAddresses();
       setAuthOpen(false);
       setLoginEmail('');
       setLoginPassword('');
@@ -445,6 +630,7 @@ export default function Storefront() {
       setUpdateAddress((data.user as any).shippingAddress || '');
       fly(`Registration complete. Welcome to Aura Farming, ${data.user.name}`);
       fetchWishlist();
+      fetchAddresses();
       setAuthOpen(false);
       setRegName('');
       setRegEmail('');
@@ -525,19 +711,66 @@ export default function Storefront() {
     fetchAdminStats();
   };
 
-  // Checkout POST to create pending order (COD) or initialize Razorpay
-  const handleCheckoutSubmit = async (e: React.FormEvent) => {
+  const handleAddressSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkoutName || !checkoutAddress || !checkoutPhone) {
-      fly('Recipient name, phone, and address are required.');
+    if (addrMobile.length !== 10 || !/^\d+$/.test(addrMobile)) {
+      fly('Please enter a valid 10 digit mobile number.');
+      return;
+    }
+
+    const payload = {
+      name: addrName,
+      mobile: addrMobile,
+      whatsappNumber: addrWhatsapp || addrMobile,
+      pinCode: addrPin,
+      flatNumber: addrFlat,
+      locality: addrLocality,
+      landmark: addrLandmark,
+      city: addrCity,
+      district: addrDistrict,
+      state: addrState,
+      addressType: addrType,
+      isDefault: addrIsDefault
+    };
+
+    try {
+      const url = addressFormMode === 'edit' && editingAddressId ? `/api/addresses/${editingAddressId}` : '/api/addresses';
+      const method = addressFormMode === 'edit' && editingAddressId ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fly('Address saved successfully');
+        await fetchAddresses();
+        setAddressFormMode('selection');
+      } else {
+        fly(data.error || 'Failed to save address');
+      }
+    } catch (err) {
+      fly('Error saving address');
+    }
+  };
+
+  // Checkout POST to create pending order (COD) or initialize Razorpay
+  const executeCheckout = async () => {
+    const selectedAddress = userAddresses.find(a => a.id === selectedAddressId);
+
+    if (!selectedAddress) {
+      fly('Please select a delivery address.');
       return;
     }
 
     try {
+      const fullAddressStr = `${selectedAddress.flatNumber}, ${selectedAddress.locality}, ${selectedAddress.landmark ? selectedAddress.landmark + ', ' : ''}${selectedAddress.city}, ${selectedAddress.district}, ${selectedAddress.state} - ${selectedAddress.pinCode}`;
+
       const payload = {
-        shipping_name: checkoutName,
-        shipping_address: checkoutAddress,
-        phone: checkoutPhone,
+        shipping_name: selectedAddress.name,
+        shipping_address: fullAddressStr,
+        phone: selectedAddress.mobile,
         payment_method: paymentMethod,
         items: cart.map(item => ({
           productId: item.pid,
@@ -579,6 +812,15 @@ export default function Storefront() {
       }
     } catch (err) {
       fly('Checkout connection failed');
+    }
+  };
+
+  const handleCheckoutSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (paymentMethod === 'cod') {
+      setCodConfirmOpen(true);
+    } else {
+      executeCheckout();
     }
   };
 
@@ -651,8 +893,14 @@ export default function Storefront() {
   // Helper properties
   const cartQty = cart.reduce((a, c) => a + c.qty, 0);
   const cartSubtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
-  const cartShippingFee = cartSubtotal >= 4999 || cartQty === 0 ? 0 : 199;
-  const cartTotal = cartSubtotal + cartShippingFee;
+  
+  const isCOD = paymentMethod === 'cod';
+  const feeConvenience = 20;
+  const feePlatform = 23;
+  const feeDelivery = isCOD ? 137 : 0;
+  const feeCOD = isCOD ? 19 : 0;
+  
+  const cartTotal = cartSubtotal + feeConvenience + feePlatform + feeDelivery + feeCOD;
 
   const updateLocalStorage = (newCart: CartItem[]) => {
     try {
@@ -1058,7 +1306,12 @@ export default function Storefront() {
 
   // Filter storefront cards matching search and tab states
   const filteredProducts = productsList.filter(p => {
-    const matchesCat = activeCat === 'all' || p.cat === activeCat;
+    let matchesCat = activeCat === 'all' || p.cat === activeCat;
+    if (activeCat === 'limited') {
+      matchesCat = p.isLimited === true;
+    } else if (activeCat === 'customize') {
+      matchesCat = p.isCustomizable === true;
+    }
     const matchesSearch = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.desc.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCat && matchesSearch;
   });
@@ -1243,7 +1496,14 @@ export default function Storefront() {
             <span>{user ? user.name.split(' ')[0] : 'Login'}</span>
           </button>
 
-          <button className="icon-btn wishlist-btn" onClick={() => setWishlistOpen(true)} aria-label="Open wishlist" style={{ position: 'relative' }}>
+          <button className="icon-btn wishlist-btn" onClick={() => {
+            setCartOpen(false);
+            setAuthOpen(false);
+            setAdminOpen(false);
+            setDetailProduct(null);
+            setTrackingOpen(false);
+            setWishlistOpen(true);
+          }} aria-label="Open wishlist" style={{ position: 'relative' }}>
             <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', fill: wishlistItems.length > 0 ? 'var(--red)' : 'none', stroke: wishlistItems.length > 0 ? 'var(--red)' : 'currentColor', strokeWidth: 2 }}>
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
@@ -1309,12 +1569,16 @@ export default function Storefront() {
 
         {/* CATEGORY TABS */}
         <div className="cats reveal in" id="cats">
-          {['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear'].map(cat => {
-            const count = cat === 'all' ? productsList.length : productsList.filter(p => p.cat === cat).length;
+          {['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear', 'limited', 'customize'].map(cat => {
             const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+            let countNode = null;
+            if (cat === 'limited') {
+              const count = productsList.filter(p => p.isLimited).length;
+              countNode = <sup>{count}</sup>;
+            }
             return (
               <button key={cat} className={`cat ${activeCat === cat ? 'on' : ''}`} onClick={() => setActiveCat(cat)}>
-                {label}<sup>{count}</sup>
+                {label}{countNode}
               </button>
             );
           })}
@@ -1323,7 +1587,7 @@ export default function Storefront() {
         {/* PRODUCTS GRID */}
         <div className="grid" id="grid">
           {filteredProducts.map(p => {
-            const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL'];
+            const sizes = p.cat === 'headwear' ? ['OS'] : GARMENT_SIZES;
             return (
               <article key={p.id} className="card reveal in" data-cat={p.cat} data-pid={p.id}>
                 <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
@@ -1361,13 +1625,92 @@ export default function Storefront() {
               </article>
             );
           })}
-          {filteredProducts.length === 0 && (
+
+          {/* NEXT DROP teaser — only on All and Limited tabs, always after real products */}
+          {(activeCat === 'all' || activeCat === 'limited') && (
+            <article className="card reveal in" onClick={() => fly('Coming Soon')} style={{ cursor: 'pointer' }}>
+              <div className="card-media" style={{ position: 'relative', overflow: 'hidden' }}>
+                <span className="tag" style={{ opacity: 0.5 }}>COMING SOON</span>
+                <span className="cat-tag" style={{ opacity: 0.5 }}>Limited</span>
+                {/* Ghosted garment SVG — reuse hoodie artwork */}
+                <div className="fig" style={{ opacity: 0.32, filter: 'drop-shadow(0 0 8px #e10600aa)' }}>
+                  <div className="shadow"></div>
+                  <div className="lift">
+                    <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS.hoodie }}></div>
+                  </div>
+                </div>
+                {/* Overlay label */}
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: '6px', pointerEvents: 'none'
+                }}>
+                  <span style={{
+                    fontFamily: 'var(--disp)', fontSize: '1.25rem', letterSpacing: '0.15em',
+                    textTransform: 'uppercase', color: 'var(--bone)', opacity: 0.9,
+                    textShadow: '0 0 20px rgba(225,6,0,0.6)'
+                  }}>NEXT DROP</span>
+                  <span style={{ width: '32px', height: '1px', background: 'var(--red)', opacity: 0.7 }} />
+                </div>
+              </div>
+              <div className="card-body">
+                <div className="top">
+                  <div className="meta">
+                    <h3 style={{ opacity: 0.6 }}>???</h3>
+                    <div className="desc" style={{ opacity: 0.45 }}>Details will be revealed on drop day.</div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          )}
+
+          {/* BUILD YOUR OWN teaser — only on All and Customize tabs, always after real products */}
+          {(activeCat === 'all' || activeCat === 'customize') && (
+            <article className="card reveal in" onClick={() => fly('Coming Soon')} style={{ cursor: 'pointer' }}>
+              <div className="card-media" style={{ position: 'relative', overflow: 'hidden' }}>
+                <span className="tag" style={{ opacity: 0.5 }}>COMING SOON</span>
+                <span className="cat-tag" style={{ opacity: 0.5 }}>Custom</span>
+                {/* Ghosted garment SVG — reuse tee artwork */}
+                <div className="fig" style={{ opacity: 0.28, filter: 'drop-shadow(0 0 6px #e1060066)' }}>
+                  <div className="shadow"></div>
+                  <div className="lift">
+                    <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS.tee }}></div>
+                  </div>
+                </div>
+                {/* Overlay label */}
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: '8px', pointerEvents: 'none'
+                }}>
+                  <svg viewBox="0 0 24 24" style={{ width: '36px', height: '36px', stroke: 'var(--red)', strokeWidth: 1.5, fill: 'none', opacity: 0.9 }}>
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  <span style={{
+                    fontFamily: 'var(--disp)', fontSize: '1.1rem', letterSpacing: '0.12em',
+                    textTransform: 'uppercase', color: 'var(--bone)', opacity: 0.85
+                  }}>BUILD YOUR OWN</span>
+                </div>
+              </div>
+              <div className="card-body">
+                <div className="top">
+                  <div className="meta">
+                    <h3 style={{ opacity: 0.6 }}>Customise</h3>
+                    <div className="desc" style={{ opacity: 0.45 }}>Design your own Aura Farming piece.</div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          )}
+
+          {filteredProducts.length === 0 && activeCat !== 'limited' && activeCat !== 'customize' && (
             <div className="empty" id="empty" style={{ display: 'block' }}>
               Nothing here yet. The archive stays closed.
             </div>
           )}
         </div>
       </section>
+
 
       {/* STORY SECTION */}
       <section id="story" data-thread="right" style={{ position: 'relative', zIndex: 2 }}>
@@ -1503,19 +1846,36 @@ export default function Storefront() {
                 </div>
               )}
             </div>
-            <div className="cart-foot">
-              <div className="cart-row"><span>Subtotal</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
-              <div className="cart-row"><span>Shipping</span><span>{cartShippingFee === 0 ? 'Free' : `₹${cartShippingFee}`}</span></div>
-              <div className="cart-row total"><span>Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b></div>
-              <button className="checkout" disabled={cart.length === 0} onClick={() => {
+            <div className="cart-foot" style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Bag Total</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
+              <div className="cart-row" style={{ color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹0</span></div>
+              <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Convenience Fee</span><span>₹{feeConvenience}</span></div>
+              <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Platform Fee</span><span>₹{feePlatform}</span></div>
+              <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}>
+                <span>Delivery Fee</span>
+                <span>
+                  {isCOD ? `₹${feeDelivery}` : (
+                    <>
+                      <span style={{ textDecoration: 'line-through', marginRight: '6px', opacity: 0.5 }}>₹49</span>
+                      <span style={{ color: '#4ade80' }}>FREE</span>
+                    </>
+                  )}
+                </span>
+              </div>
+              {isCOD && (
+                <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Cash on Delivery Fee</span><span>₹{feeCOD}</span></div>
+              )}
+              <div className="cart-row total" style={{ marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--hair2)' }}>
+                <span>Order Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b>
+              </div>
+              
+              <button className="checkout" style={{ marginTop: '16px' }} disabled={cart.length === 0} onClick={() => {
                 if (!user) {
                   setCartOpen(false);
                   setAuthMode('login');
                   setAuthOpen(true);
                   fly('Please login or register to complete your checkout');
                 } else {
-                  setCheckoutName(user.name);
-                  setCheckoutAddress((user as any).shippingAddress || '');
                   setCheckoutStep('shipping');
                 }
               }}>
@@ -1527,75 +1887,266 @@ export default function Storefront() {
         ) : checkoutStep === 'shipping' ? (
           <>
             <div className="cart-head">
-              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Shipping</h3>
+              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Delivery Address</h3>
               <button className="cart-close" onClick={() => setCheckoutStep('cart')}>&larr;</button>
             </div>
-            <form onSubmit={handleCheckoutSubmit} className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px 24px', overflowY: 'auto' }}>
-              <p style={{ color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>
-                Confirm shipping coordinates for the transaction.
+            <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
+              {(userAddresses.length === 0 || addressFormMode === 'edit') ? (
+                <form onSubmit={handleAddressSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h4 style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}>{userAddresses.length === 0 ? "Add New Address" : "Edit Address"}</h4>
+                    {userAddresses.length > 0 && (
+                      <button type="button" onClick={() => setAddressFormMode('selection')} style={{ background: 'none', border: 'none', color: 'var(--dim)', cursor: 'pointer', fontSize: '0.8rem' }}>Cancel</button>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Name *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrName} onChange={e => setAddrName(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Mobile *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="tel" value={addrMobile} onChange={e => setAddrMobile(e.target.value.replace(/\D/g, '').slice(0, 10))} required placeholder="10-digit mobile number" style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">WhatsApp / Phone Number</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
+                      <span style={{ paddingLeft: '14px', color: 'var(--dim2)', fontSize: '0.9rem' }}>+91</span>
+                      <input type="tel" value={addrWhatsapp} onChange={e => setAddrWhatsapp(e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="Defaults to Mobile if left blank" style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                    <span style={{ fontSize: '0.65rem', color: 'var(--dim)', fontStyle: 'italic' }}>Used for order notifications via WhatsApp</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Pin Code *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrPin} onChange={e => setAddrPin(e.target.value.replace(/\D/g, '').slice(0, 6))} required placeholder="6-digit PIN code" style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Flat Number / Building Name *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrFlat} onChange={e => setAddrFlat(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Locality / Area / Street *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrLocality} onChange={e => setAddrLocality(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Landmark *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrLandmark} onChange={e => setAddrLandmark(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">State *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <select value={addrState} onChange={e => setAddrState(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none', WebkitAppearance: 'none' }}>
+                        <option value="" disabled style={{ color: '#000' }}>Select State</option>
+                        {["Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli", "Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"].map(s => <option key={s} value={s} style={{ color: '#000' }}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">District *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrDistrict} onChange={e => setAddrDistrict(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">City *</label>
+                    <div style={{ width: '100%', borderRadius: '12px', background: 'var(--ink)', border: '1px solid var(--hair2)', overflow: 'hidden' }}>
+                      <input type="text" value={addrCity} onChange={e => setAddrCity(e.target.value)} required style={{ padding: '10px 14px', width: '100%', background: 'transparent', border: '0', color: 'var(--bone)', outline: 'none' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label className="foot-label">Address Type</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      {['Home', 'Work', 'Others'].map(type => (
+                        <button key={type} type="button" onClick={() => setAddrType(type)} style={{ padding: '6px 14px', borderRadius: '20px', border: addrType === type ? '1px solid var(--bone)' : '1px solid var(--hair2)', background: addrType === type ? 'var(--bone)' : 'transparent', color: addrType === type ? 'var(--ink)' : 'var(--dim)', fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.2s' }}>
+                          {type}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <button className="checkout" type="submit" style={{ flex: 1 }}>Save</button>
+                    <button type="button" onClick={() => {
+                      setAddrName(''); setAddrMobile(''); setAddrWhatsapp(''); setAddrPin(''); setAddrFlat(''); setAddrLocality(''); setAddrLandmark(''); setAddrCity(''); setAddrDistrict(''); setAddrState(''); setAddrType('Home');
+                    }} style={{ flex: 1, padding: '12px', background: 'var(--coal)', border: 'none', color: 'var(--bone)', borderRadius: '12px', cursor: 'pointer', fontFamily: 'var(--disp)', letterSpacing: '0.05em' }}>Reset</button>
+                  </div>
+                </form>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <p style={{ color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>
+                    We will deliver your order to this address.
+                  </p>
+
+                  <button type="button" onClick={() => {
+                    setAddrName(''); setAddrMobile(''); setAddrWhatsapp(''); setAddrPin(''); setAddrFlat(''); setAddrLocality(''); setAddrLandmark(''); setAddrCity(''); setAddrDistrict(''); setAddrState(''); setAddrType('Home'); setAddrIsDefault(false); setEditingAddressId(''); setAddressFormMode('edit');
+                  }} style={{ padding: '12px', background: 'transparent', border: '1px dashed var(--hair2)', color: 'var(--bone)', borderRadius: '12px', cursor: 'pointer', fontFamily: 'var(--body)' }}>
+                    + Add New Address
+                  </button>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {userAddresses.map(addr => (
+                      <div key={addr.id} onClick={() => setSelectedAddressId(addr.id)} style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px', background: 'var(--ink)', borderRadius: '12px', border: selectedAddressId === addr.id ? '1px solid var(--bone)' : '1px solid var(--hair2)', cursor: 'pointer', position: 'relative' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ color: 'var(--bone)', fontWeight: 600 }}>{addr.name}</div>
+                            <div style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'var(--coal)', color: 'var(--dim)', borderRadius: '4px', textTransform: 'uppercase' }}>{addr.addressType}</div>
+                            {addr.isDefault && <div style={{ fontSize: '0.65rem', padding: '2px 6px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', textTransform: 'uppercase' }}>Default</div>}
+                          </div>
+                          <button type="button" onClick={(e) => {
+                            e.stopPropagation();
+                            setAddrName(addr.name); setAddrMobile(addr.mobile); setAddrWhatsapp(addr.whatsappNumber || ''); setAddrPin(addr.pinCode); setAddrFlat(addr.flatNumber); setAddrLocality(addr.locality); setAddrLandmark(addr.landmark); setAddrCity(addr.city); setAddrDistrict(addr.district); setAddrState(addr.state); setAddrType(addr.addressType); setAddrIsDefault(addr.isDefault); setEditingAddressId(addr.id); setAddressFormMode('edit');
+                          }} style={{ background: 'transparent', border: 'none', color: 'var(--dim)', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline', padding: 0 }}>Edit</button>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--dim2)', lineHeight: '1.4' }}>
+                          {addr.flatNumber}, {addr.locality}<br />
+                          {addr.landmark && <>{addr.landmark}<br /></>}
+                          {addr.city}, {addr.district}, {addr.state} - {addr.pinCode}
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--bone)' }}>
+                          Phone : {addr.mobile}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button className="checkout" type="button" onClick={() => setCheckoutStep('payment-method')} style={{ marginTop: '10px' }}>Deliver to this Address</button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : checkoutStep === 'payment-method' ? (
+          <>
+            <div className="cart-head">
+              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment Mode</h3>
+              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
+            </div>
+            <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
+              <p style={{ color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--serif)', fontStyle: 'italic', marginBottom: '16px' }}>
+                Select your preferred payment method.
               </p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Recipient Name</label>
-                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
-                  <input type="text" value={checkoutName} onChange={(e) => setCheckoutName(e.target.value)} placeholder="Akash" required style={{ padding: '10px 14px' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {[
+                  { id: 'card', label: 'Credit/Debit Card' },
+                  { id: 'upi', label: 'UPI' },
+                  { id: 'netbanking', label: 'NetBanking' },
+                  { id: 'wallet', label: 'Wallet' },
+                  { id: 'emi', label: 'EMI' },
+                  { id: 'cod', label: 'Cash on Delivery' },
+                ].map(method => (
+                  <div
+                    key={method.id}
+                    onClick={() => {
+                      if (['netbanking', 'wallet', 'emi'].includes(method.id)) {
+                        fly(`${method.label} is coming soon!`);
+                      } else {
+                        setPaymentMethod(method.id as any);
+                      }
+                    }}
+                    style={{
+                      padding: '16px',
+                      background: 'var(--ink)',
+                      borderRadius: '12px',
+                      border: paymentMethod === method.id ? '1px solid var(--bone)' : '1px solid var(--hair2)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      opacity: ['netbanking', 'wallet', 'emi'].includes(method.id) ? 0.6 : 1
+                    }}
+                  >
+                    <div style={{ color: paymentMethod === method.id ? 'var(--bone)' : 'var(--dim2)', fontWeight: paymentMethod === method.id ? 600 : 400 }}>
+                      {method.label}
+                      {method.id === 'cod' && <span style={{ fontSize: '0.75rem', marginLeft: '8px', color: 'var(--dim)' }}>(₹199 extra)</span>}
+                    </div>
+                    {paymentMethod === method.id && (
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--bone)' }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: '20px', padding: '16px', background: 'var(--coal)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Bag Total</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹0</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Convenience Fee</span><span>₹{feeConvenience}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Platform Fee</span><span>₹{feePlatform}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}>
+                  <span>Delivery Fee</span>
+                  <span>
+                    {isCOD ? `₹${feeDelivery}` : (
+                      <>
+                        <span style={{ textDecoration: 'line-through', marginRight: '6px', opacity: 0.5 }}>₹49</span>
+                        <span style={{ color: '#4ade80' }}>FREE</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+                {isCOD && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Cash on Delivery Fee</span><span>₹{feeCOD}</span></div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--hair2)' }}>
+                  <span>Order Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b>
                 </div>
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Phone Number</label>
-                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
-                  <input type="tel" value={checkoutPhone} onChange={(e) => setCheckoutPhone(e.target.value)} placeholder="9999999999" required style={{ padding: '10px 14px' }} />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Coordinates Address</label>
-                <textarea
-                  value={checkoutAddress}
-                  onChange={(e) => setCheckoutAddress(e.target.value)}
-                  placeholder="Enter your full shipping address..."
-                  required
-                  style={{ background: 'var(--ink)', border: '1px solid var(--hair2)', borderRadius: '12px', color: 'var(--bone)', padding: '12px', fontFamily: 'var(--body)', fontSize: '0.85rem', height: '80px', resize: 'none', outline: 'none' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label className="foot-label">Payment Method</label>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
-                    <input type="radio" name="paymentMethod" value="card" checked={paymentMethod === 'card'} onChange={() => setPaymentMethod('card')} />
-                    Card
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
-                    <input type="radio" name="paymentMethod" value="upi" checked={paymentMethod === 'upi'} onChange={() => setPaymentMethod('upi')} />
-                    UPI
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--bone)', fontSize: '0.9rem' }}>
-                    <input type="radio" name="paymentMethod" value="cod" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} />
-                    Cash on Delivery (₹199 extra)
-                  </label>
-                </div>
-              </div>
-
-              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>{paymentMethod === 'cod' ? 'Place COD Order' : 'Proceed to Payment'}</button>
-            </form>
+              <button className="checkout" type="button" onClick={handleCheckoutSubmit} style={{ marginTop: '20px' }}>
+                {paymentMethod === 'cod' ? 'Place COD Order' : 'Proceed to Payment'}
+              </button>
+              <PayConfirmModal
+                isOpen={codConfirmOpen}
+                onCancel={() => setCodConfirmOpen(false)}
+                onConfirm={() => {
+                  setCodConfirmOpen(false);
+                  executeCheckout();
+                }}
+                total={cartTotal}
+                paymentMethod={paymentMethod}
+                shippingName={userAddresses.find(a => a.id === selectedAddressId)?.name || ''}
+                shippingAddress={(() => {
+                  const a = userAddresses.find(a => a.id === selectedAddressId);
+                  return a ? `${a.flatNumber}, ${a.locality}, ${a.landmark ? a.landmark + ', ' : ''}${a.city}, ${a.district}, ${a.state} - ${a.pinCode}` : '';
+                })()}
+              />
+            </div>
           </>
         ) : (
           <>
             <div className="cart-head">
               <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment</h3>
-              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
+              <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
               {checkoutData && (
                 <RazorpayPaymentForm
                   checkoutData={checkoutData}
-                  shippingName={checkoutName}
-                  shippingAddress={checkoutAddress}
-                  phone={checkoutPhone}
-                  paymentMethod={paymentMethod}
-                  onBack={() => setCheckoutStep('shipping')}
+                  shippingName={userAddresses.find(a => a.id === selectedAddressId)?.name || ''}
+                  shippingAddress={(() => {
+                    const a = userAddresses.find(a => a.id === selectedAddressId);
+                    return a ? `${a.flatNumber}, ${a.locality}, ${a.landmark ? a.landmark + ', ' : ''}${a.city}, ${a.district}, ${a.state} - ${a.pinCode}` : '';
+                  })()}
+                  phone={userAddresses.find(a => a.id === selectedAddressId)?.mobile || ''}
+                  paymentMethod={paymentMethod as 'card' | 'upi' | 'cod'}
+                  onBack={() => setCheckoutStep('payment-method')}
                   onSuccess={() => {
                     setCart([]);
                     updateLocalStorage([]);
@@ -1775,19 +2326,49 @@ export default function Storefront() {
               <div style={{ marginTop: '10px', borderTop: '1px solid var(--hair2)', paddingTop: '20px' }}>
                 <h5 className="foot-label" style={{ marginBottom: '10px' }}>Marked Lineage (Orders)</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  {userOrders.map(order => (
-                    <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
-                        <span style={{ color: 'var(--bone)' }}>{order.id}</span>
-                        <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
+                  {userOrders.length === 0 ? (
+                    <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>
+                  ) : (
+                    groupOrdersByDay(userOrders).map(({ bucket, items }) => (
+                      <div key={bucket}>
+                        <div style={{ fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--dim2)', fontFamily: 'var(--disp)', marginBottom: '6px', paddingBottom: '4px', borderBottom: '1px solid var(--hair2)' }}>
+                          {bucket}
+                        </div>
+                        {items.map(order => {
+                          const d = parseSqlDate((order as any).createdAt ?? order.created_at);
+                          return (
+                            <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                                <span style={{ color: 'var(--bone)' }}>{order.id}</span>
+                                <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
+                              </div>
+                              {d && <div style={{ fontSize: '0.64rem', color: 'var(--dim2)' }}>{formatOrderTime(d)}</div>}
+                              {/* Product summary */}
+                              {order.items && order.items.length > 0 && (() => {
+                                const visible = order.items.slice(0, 2);
+                                const extra = order.items.length - 2;
+                                return (
+                                  <div style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginTop: '2px' }}>
+                                    <span style={{ color: 'var(--dim)', fontFamily: 'var(--disp)', textTransform: 'uppercase', fontSize: '0.55rem', letterSpacing: '0.08em' }}>Products</span>
+                                    {visible.map((it: any, i: number) => (
+                                      <div key={i} style={{ color: 'var(--dim2)', paddingLeft: '6px' }}>
+                                        {it.name} ({it.size}) ×{it.quantity}
+                                      </div>
+                                    ))}
+                                    {extra > 0 && <div style={{ color: 'var(--dim)', paddingLeft: '6px', fontStyle: 'italic' }}>+{extra} more</div>}
+                                  </div>
+                                );
+                              })()}
+                              <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
+                              <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
+                                Track Progress &rarr;
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
-                      <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
-                        Track Progress &rarr;
-                      </button>
-                    </div>
-                  ))}
-                  {userOrders.length === 0 && <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>}
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -1830,8 +2411,8 @@ export default function Storefront() {
 
           adminStats.orders.forEach((o: any) => {
             if (!o.created_at) return;
-            const cleanStr = o.created_at.endsWith('Z') ? o.created_at : o.created_at + ' UTC';
-            const date = new Date(cleanStr);
+            const date = parseSqlDate(o.created_at);
+            if (!date) return;
             const label = date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
             if (salesMap[label] !== undefined) {
               salesMap[label].count++;
@@ -1994,14 +2575,41 @@ export default function Storefront() {
               <div>
                 <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Order Status Override</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
-                  {adminStats.orders.map((o: any) => (
-                    <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                        <span style={{ color: 'var(--bone)' }}>{o.id}</span>
-                        <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
+                  {groupOrdersByDay(adminStats.orders).map(({ bucket, items }: { bucket: string; items: any[] }) => (
+                    <div key={bucket}>
+                      <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--dim2)', fontFamily: 'var(--disp)', marginBottom: '6px', paddingBottom: '4px', borderBottom: '1px solid var(--hair2)' }}>
+                        {bucket}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>Recipient: {o.shipping_name} &middot; Total: ₹{o.total.toLocaleString('en-IN')}</div>
-                      <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
+                      {items.map((o: any) => {
+                        const d = parseSqlDate(o.createdAt ?? o.created_at);
+                        return (
+                          <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                              <span style={{ color: 'var(--bone)' }}>{o.id}</span>
+                              <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
+                            </div>
+                            {d && <div style={{ fontSize: '0.65rem', color: 'var(--dim2)' }}>{formatOrderTime(d)}</div>}
+                            {/* Product summary */}
+                            {o.items && o.items.length > 0 && (() => {
+                              const visible = o.items.slice(0, 2);
+                              const extra = o.items.length - 2;
+                              return (
+                                <div style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginTop: '2px' }}>
+                                  <span style={{ color: 'var(--dim)', fontFamily: 'var(--disp)', textTransform: 'uppercase', fontSize: '0.55rem', letterSpacing: '0.08em' }}>Products</span>
+                                  {visible.map((it: any, i: number) => (
+                                    <div key={i} style={{ color: 'var(--dim2)', paddingLeft: '6px' }}>
+                                      {it.name} ({it.size}) ×{it.quantity}
+                                    </div>
+                                  ))}
+                                  {extra > 0 && <div style={{ color: 'var(--dim)', paddingLeft: '6px', fontStyle: 'italic' }}>+{extra} more</div>}
+                                </div>
+                              );
+                            })()}
+                            <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>Recipient: {o.shippingName ?? o.shipping_name} &middot; Total: ₹{o.total.toLocaleString('en-IN')}</div>
+                            <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
+                          </div>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -2262,15 +2870,32 @@ export default function Storefront() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {wishlistItems.map(item => (
                 <div key={item.id} style={{ display: 'flex', gap: '14px', background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '12px', padding: '12px 16px', alignItems: 'center' }}>
-                  {/* Miniature Spin Garment SVG icon */}
-                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0 }}>
+                  {/* Miniature Spin Garment SVG icon — clickable to open detail */}
+                  <div
+                    style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0, cursor: 'pointer' }}
+                    onClick={() => {
+                      setWishlistOpen(false);
+                      setDetailProduct(item);
+                      setDetailSize((item as any).size || 'M');
+                      setDetailOpenedFromWishlist(true);
+                    }}
+                  >
                     <div style={{ width: '36px', height: '36px', transform: 'scale(0.85)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
                   </div>
 
-                  {/* Name and Price */}
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px' }}>
+                  {/* Name, Price and Size */}
+                  <div
+                    style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', cursor: 'pointer' }}
+                    onClick={() => {
+                      setWishlistOpen(false);
+                      setDetailProduct(item);
+                      setDetailSize((item as any).size || 'M');
+                      setDetailOpenedFromWishlist(true);
+                    }}
+                  >
                     <span style={{ fontSize: '0.8rem', color: 'var(--bone)', fontWeight: 500 }}>{item.name}</span>
                     <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')}</span>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--dim2)', marginTop: '1px' }}>Size: {(item as any).size || 'M'}</span>
                   </div>
 
                   {/* Action Buttons (Add to Cart, Delete) */}
@@ -2278,7 +2903,7 @@ export default function Storefront() {
                     <button
                       className="foot-chip"
                       onClick={() => {
-                        addToCart(item, 'M');
+                        addToCart(item, (item as any).size || 'M');
                       }}
                       style={{ height: '26px', padding: '0 10px', fontSize: '0.6rem' }}
                     >
@@ -2314,9 +2939,9 @@ export default function Storefront() {
       {/* PRODUCT DETAILS VIEW MODAL */}
       {detailProduct && (
         <div className="pdetail-modal open" id="pdetailModal">
-          <div className="pdetail-overlay" onClick={() => setDetailProduct(null)}></div>
+          <div className="pdetail-overlay" onClick={() => { setDetailProduct(null); setDetailOpenedFromWishlist(false); }}></div>
           <div className="pdetail-content">
-            <button className="pdetail-close" onClick={() => setDetailProduct(null)} aria-label="Close product details">&times;</button>
+            <button className="pdetail-close" onClick={() => { setDetailProduct(null); setDetailOpenedFromWishlist(false); }} aria-label="Close product details">&times;</button>
             <div className="pdetail-grid">
               <div className="pdetail-media">
                 <div className="fig" style={{ width: '220px', aspectRatio: '200/220', position: 'relative' }}>
@@ -2334,8 +2959,13 @@ export default function Storefront() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
                   <span className="foot-label">Select Size</span>
                   <div className="pdetail-sizes">
-                    {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL']).map(s => (
-                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => setDetailSize(s)}>
+                    {(detailProduct.cat === 'headwear' ? ['OS'] : GARMENT_SIZES).map(s => (
+                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => {
+                        setDetailSize(s);
+                        if (detailOpenedFromWishlist) {
+                          updateWishlistSize(detailProduct.id, s);
+                        }
+                      }}>
                         {s}
                       </button>
                     ))}

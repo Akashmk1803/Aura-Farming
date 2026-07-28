@@ -153,10 +153,13 @@ try {
       city TEXT NOT NULL,
       state TEXT NOT NULL,
       address_type TEXT NOT NULL,
-      is_default INTEGER NOT NULL DEFAULT 0
+      is_default INTEGER NOT NULL DEFAULT 0,
+      district TEXT NOT NULL DEFAULT ''
     )
   `);
 } catch {}
+
+try { sqlite.exec(`ALTER TABLE addresses ADD COLUMN district TEXT NOT NULL DEFAULT ''`); } catch {}
 
 
 

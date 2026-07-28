@@ -49,12 +49,13 @@ export async function POST(req: NextRequest) {
       flatNumber,
       landmark,
       city,
+      district,
       state,
       addressType,
       isDefault
     } = await req.json();
 
-    if (!name || !mobile || !pinCode || !locality || !flatNumber || !landmark || !city || !state || !addressType) {
+    if (!name || !mobile || !pinCode || !locality || !flatNumber || !landmark || !city || !district || !state || !addressType) {
       return NextResponse.json({ error: 'Missing required address fields.' }, { status: 400 });
     }
 
@@ -90,6 +91,7 @@ export async function POST(req: NextRequest) {
           flatNumber,
           landmark,
           city,
+          district,
           state,
           addressType,
           isDefault: makeDefault,

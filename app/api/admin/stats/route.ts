@@ -45,7 +45,26 @@ export async function GET() {
     .orderBy(desc(sql`SUM(${orderItems.quantity})`))
     .all();
 
-    const allOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)).all();
+    const allOrdersRaw = await db.select().from(orders).orderBy(desc(orders.createdAt)).all();
+
+    // Attach order items (name, size, qty) to each order for the admin order card product summary
+    const allOrders = [];
+    for (const order of allOrdersRaw) {
+      const items = await db.select({
+        id: orderItems.id,
+        productId: orderItems.productId,
+        size: orderItems.size,
+        quantity: orderItems.quantity,
+        price: orderItems.price,
+        name: products.name,
+        artSvgKey: products.artSvgKey
+      })
+      .from(orderItems)
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(eq(orderItems.orderId, order.id))
+      .all();
+      allOrders.push({ ...order, items });
+    }
 
     return NextResponse.json({
       totalSales,
