@@ -3,6 +3,10 @@ import { createClient } from '@libsql/client';
 import path from 'path';
 import * as schema from './schema';
 import { randomBytes, scryptSync } from 'node:crypto';
+import { loadEnvConfig } from '@next/env';
+
+const projectDir = process.cwd();
+loadEnvConfig(projectDir);
 
 function hashPasswordSync(password: string): string {
   const salt = randomBytes(16).toString('hex');
