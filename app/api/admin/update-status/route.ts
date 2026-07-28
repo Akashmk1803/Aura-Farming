@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch current order to determine payment method and total for refund calc
-    const order = db.select().from(orders).where(eq(orders.id, orderId)).get();
+    const order = await db.select().from(orders).where(eq(orders.id, orderId)).get();
     if (!order) {
       return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
     }
@@ -40,12 +40,12 @@ export async function POST(req: NextRequest) {
       updateData.refundAmount = refundAmount;
     }
 
-    const result = db.update(orders)
+    const result = await db.update(orders)
       .set(updateData)
       .where(eq(orders.id, orderId))
       .run();
 
-    if (result.changes === 0) {
+    if (result.rowsAffected === 0) {
       return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
     }
 

@@ -30,15 +30,9 @@ export async function POST(req: NextRequest) {
     const validatedItems = [];
 
     for (const item of items) {
-      const product = db.select().from(products).where(eq(products.id, item.productId)).get();
-      if (!product) {
-        return NextResponse.json({ error: `Product not found: ${item.productId}` }, { status: 404 });
-      }
-      if (product.stock < item.quantity) {
-        return NextResponse.json(
-          { error: `Insufficient stock for ${product.name}. Only ${product.stock} left.` },
-          { status: 409 }
-        );
+      const product = await db.select().from(products).where(eq(products.id, item.productId)).get();
+      if (!product || product.stock < item.quantity) {
+        return NextResponse.json({ error: `Product ${product ? product.name : item.productId} unavailable or out of stock (only ${product?.stock || 0} left).` }, { status: 409 });
       }
       subtotal += product.price * item.quantity;
       validatedItems.push({

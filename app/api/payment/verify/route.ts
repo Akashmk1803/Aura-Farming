@@ -57,9 +57,9 @@ export async function POST(req: NextRequest) {
     const orderId = 'AURA-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
     const itemsSummary = validatedItems.map((item: any) => `${item.name} (${item.size}) x${item.quantity}`).join(', ');
 
-    // ─── Synchronous DB transaction ─────────────────────────────────
-    db.transaction((tx) => {
-      tx.insert(orders).values({
+    // ─── Asynchronous DB transaction ─────────────────────────────────
+    await db.transaction(async (tx) => {
+      await tx.insert(orders).values({
         id: orderId,
         userId,
         shippingName: shipping_name,
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       }).run();
 
       for (const item of validatedItems) {
-        tx.insert(orderItems).values({
+        await tx.insert(orderItems).values({
           orderId,
           productId: item.productId,
           size: item.size,
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
         }).run();
 
         // Atomically decrement stock
-        tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
+        await tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
       }
     });
 

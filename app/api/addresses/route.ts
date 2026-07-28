@@ -16,7 +16,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const userAddresses = db
+    const userAddresses = await db
       .select()
       .from(addresses)
       .where(eq(addresses.userId, session.user.id))
@@ -62,24 +62,24 @@ export async function POST(req: NextRequest) {
     const addressId = 'ADDR-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
     // If isDefault is true or this is the user's first address, mark it default
-    const existingCount = db
+    const existingCount = (await db
       .select()
       .from(addresses)
       .where(eq(addresses.userId, session.user.id))
-      .all().length;
+      .all()).length;
 
     const makeDefault = isDefault || existingCount === 0;
 
-    db.transaction((tx) => {
+    await db.transaction(async (tx) => {
       if (makeDefault) {
         // Unset any previous defaults
-        tx.update(addresses)
+        await tx.update(addresses)
           .set({ isDefault: false })
           .where(eq(addresses.userId, session.user.id))
           .run();
       }
 
-      tx.insert(addresses)
+      await tx.insert(addresses)
         .values({
           id: addressId,
           userId: session.user.id,
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         .run();
     });
 
-    const saved = db
+    const saved = await db
       .select()
       .from(addresses)
       .where(eq(addresses.id, addressId))

@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       .where(eq(products.id, productId))
       .run();
 
-    if (result.changes === 0) {
+    if (result.rowsAffected === 0) {
       return NextResponse.json({ error: 'Product not found.' }, { status: 404 });
     }
 

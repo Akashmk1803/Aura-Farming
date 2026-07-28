@@ -21,7 +21,7 @@ export async function PUT(
     }
 
     // Verify ownership
-    const existing = db
+    const existing = await db
       .select()
       .from(addresses)
       .where(and(eq(addresses.id, id), eq(addresses.userId, session.user.id)))
@@ -31,15 +31,15 @@ export async function PUT(
       return NextResponse.json({ error: 'Address not found or unauthorized.' }, { status: 404 });
     }
 
-    db.transaction((tx) => {
+    await db.transaction(async (tx) => {
       // 1. Unset all defaults
-      tx.update(addresses)
+      await tx.update(addresses)
         .set({ isDefault: false })
         .where(eq(addresses.userId, session.user.id))
         .run();
 
       // 2. Mark this one default
-      tx.update(addresses)
+      await tx.update(addresses)
         .set({ isDefault: true })
         .where(eq(addresses.id, id))
         .run();

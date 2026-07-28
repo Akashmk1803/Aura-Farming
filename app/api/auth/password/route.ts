@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
     }
 
     // Fetch the stored credential account for this user
-    const credential = db
+    const credential = await db
       .select()
       .from(account)
       .where(eq(account.userId, session.user.id))
@@ -69,7 +69,7 @@ export async function PUT(req: NextRequest) {
 
     // Hash and store the new password
     const newHash = hashPasswordSync(new_password);
-    db.update(account)
+    await db.update(account)
       .set({ password: newHash, updatedAt: new Date() })
       .where(eq(account.userId, session.user.id))
       .run();

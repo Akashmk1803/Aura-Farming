@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     }[] = [];
 
     for (const item of items) {
-      const product = db.select().from(products).where(eq(products.id, item.productId)).get();
+      const product = await db.select().from(products).where(eq(products.id, item.productId)).get();
       if (!product) {
         return NextResponse.json({ error: `Product not found: ${item.productId}` }, { status: 404 });
       }
@@ -98,8 +98,8 @@ export async function POST(req: NextRequest) {
 
 // ─── PHASE 2 (COD) ────────────────────────────────────────────────────────
     if (isCOD) {
-      db.transaction((tx) => {
-        tx.insert(orders).values({
+      await db.transaction(async (tx) => {
+        await tx.insert(orders).values({
           id: orderId,
           userId,
           shippingName: shipping_name,
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
         }).run();
 
         for (const item of validatedItems) {
-          tx.insert(orderItems).values({
+          await tx.insert(orderItems).values({
             orderId,
             productId: item.productId,
             size: item.size,
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
             price: item.price,
           }).run();
 
-          tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
+          await tx.run(sql`UPDATE products SET stock = stock - ${item.quantity} WHERE id = ${item.productId}`);
         }
       });
 
