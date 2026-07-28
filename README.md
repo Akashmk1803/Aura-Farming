@@ -27,18 +27,20 @@
 | Feature | Status |
 |---|---|
 | Animated SVG garment catalogue (Hoodie, Tee, Longsleeve, Jacket, Cargo, Cap) | ✅ Real |
-| Category tab filtering & search autocomplete | ✅ Real |
-| Product detail modal with size selector (S/M/L/XL/XXL) | ✅ Real |
+| Category tab filtering, search autocomplete, & bottom teaser cards | ✅ Real |
+| Product detail modal with size selector (S/M/L/XL/XXL) | ✅ Real — XXL support added |
 | Cart — localStorage, qty controls, cross-step persistence | ✅ Real |
 | Wishlist — DB-persisted per user, size-synced | ✅ Real |
-| Shipping address management (save, default, multi-address) | ✅ Real |
+| Shipping address management (full form, validation, default, multi-address) | ✅ Real |
+| Dedicated Payment Method Step (Card, UPI, COD, NetBanking, etc.) | ✅ Real |
+| Comprehensive Fee Calculation (Convenience, Platform, COD, Delivery) | ✅ Real |
 | Prepaid checkout (Card / UPI via Razorpay) | ✅ Real |
 | Cash on Delivery checkout | ✅ Real — order created, cash on delivery |
-| Pay Confirmation Modal (pre-submit review) | ✅ Real |
+| Pay Confirmation Modal (pre-submit review for all methods) | ✅ Real |
 | Double-submit prevention (ref lock + 15s backend dedup) | ✅ Real |
 | Order tracking timeline (per-status visual) | ✅ Real |
-| Customer order history (Marked Lineage) — grouped by date | ✅ Real |
-| Admin Console (stats, status override, restock) | ✅ Real — secret `Shift+A` |
+| Customer order history (Marked Lineage) — date grouping & product summaries | ✅ Real |
+| Admin Console (stats, status override, restock, grouped orders) | ✅ Real — secret `Shift+A` |
 | Customize Builder (`/customize-builder`) | ✅ Real SVG renderer |
 | WhatsApp order notification | ⚠️ Mocked to console.log |
 | Email verification on registration | ⚠️ Mocked to terminal by default |
