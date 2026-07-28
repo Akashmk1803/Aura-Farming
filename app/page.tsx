@@ -1,15 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, useStripe, useElements, CardNumberElement, CardExpiryElement, CardCvcElement } from '@stripe/react-stripe-js';
 import { authClient } from '@/lib/auth-client';
-// ─── Fee constants — mirrored exactly in app/api/orders/route.ts ─────────────
-// Card/UPI: 20 + 0 + 23 + 0   = ₹43 extra on top of bag total
-// COD:      20 + 137 + 23 + 19 = ₹199 extra on top of bag total
-const CONVENIENCE_FEE = 20;
-const PLATFORM_FEE    = 23;
-const DELIVERY_FEE_PREPAID = 0;
-const DELIVERY_FEE_COD     = 137;
-const COD_FEE_CHARGE       = 19;
+
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_51NpxXhSFg0WkGypYwK8j7h6g5f4d3s2a1qW2e3r4t5y6u7i8o9p0AURA');
 
 // Hardcoded premium SVG models exactly matching client catalog designs
 const SVGS = {
@@ -30,9 +26,6 @@ interface Product {
   catLabel: string;
   art: keyof typeof SVGS;
   stock: number;
-  isLimited: boolean;
-  isCustomizable: boolean;
-  size?: string;
 }
 
 interface CartItem {
@@ -42,8 +35,6 @@ interface CartItem {
   art: keyof typeof SVGS;
   size: string;
   qty: number;
-  color?: string;
-  customText?: string;
 }
 
 interface OrderItem {
@@ -66,520 +57,221 @@ interface Order {
   status: string;
   created_at: string;
   items: OrderItem[];
-  paymentMethod?: string;
-  refundAmount?: number | null;
 }
 
-interface Address {
-  id: string;
-  userId: string;
-  name: string;
-  mobile: string;
-  whatsappNumber?: string | null;
-  pinCode: string;
-  locality: string;
-  flatNumber: string;
-  landmark: string;
-  city: string;
-  state: string;
-  addressType: 'Home' | 'Work' | 'Others';
-  isDefault: boolean;
-}
-
-// ─── Shared card visualizer (used by both mock and real forms) ───────────────
-function CardVisualizer({
-  cardHolder,
-  cardFlipped,
-  cardBrand,
-  cardNumber = '•••• •••• •••• ••••',
-  cardExpiry = 'MM/YY',
-  cardCvc = '•••',
-  onFlipToggle
-}: {
-  cardHolder: string;
-  cardFlipped: boolean;
-  cardBrand: string;
-  cardNumber?: string;
-  cardExpiry?: string;
-  cardCvc?: string;
-  onFlipToggle?: () => void;
-}) {
-  return (
-    <div style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
-      <div style={{ width: '100%', height: '100%', position: 'relative', transformStyle: 'preserve-3d', transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)', transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}>
-        {/* Front Face */}
-        <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
-              {onFlipToggle && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFlipToggle(); }}
-                  style={{ background: 'none', border: 'none', color: 'var(--dim2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-                  title="Flip Card"
-                >
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-          <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', color: 'var(--bone)' }}>
-            {cardNumber}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-            <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
-              <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
-              <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardHolder}</div>
-            </div>
-            <div style={{ flex: '0 0 auto' }}>
-              <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>{cardExpiry}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Back Face */}
-        <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
-          <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }} />
-          <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
-            <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
-            <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.1em' }}>
-              {cardCvc}
-            </div>
-          </div>
-          <div style={{ padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-            <div style={{ fontSize: '0.55rem', color: 'var(--dim2)', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
-            {onFlipToggle && (
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFlipToggle(); }}
-                style={{ background: 'none', border: 'none', color: 'var(--dim2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-                title="Flip Card"
-              >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-// ─── Pay confirmation modal — shown before any payment/order submission ─────
-function PayConfirmModal({
-  open, total, paymentMethod, addressSummary, onConfirm, onCancel, submitting
-}: {
-  open: boolean;
+interface PaymentFormProps {
+  clientSecret: string;
+  orderId: string;
   total: number;
-  paymentMethod: string;
-  addressSummary: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-  submitting?: boolean;
-}) {
-  const methodLabel: Record<string, string> = {
-    card: 'Credit / Debit Card',
-    upi:  'UPI',
-    cod:  'Cash on Delivery',
-  };
-  const label = methodLabel[paymentMethod] ?? paymentMethod;
-
-  return (
-    <div className={`pay-confirm-overlay${open ? ' open' : ''}`} role="dialog" aria-modal="true">
-      <div className="pay-confirm-backdrop" onClick={onCancel} />
-      <div className="pay-confirm-card">
-        {/* Header */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <div style={{ fontFamily: 'var(--disp)', fontSize: '1rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--bone)' }}>
-            Confirm Order
-          </div>
-          <div style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
-            Please review before we process your payment.
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div style={{ height: '1px', background: 'var(--hair2)' }} />
-
-        {/* Summary rows */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>Order Total</span>
-            <span style={{ fontSize: '1.05rem', color: 'var(--bone)', fontFamily: 'var(--disp)', fontWeight: 700 }}>₹{total.toLocaleString('en-IN')}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>Payment via</span>
-            <span style={{ fontSize: '0.76rem', color: 'var(--bone)', fontFamily: 'var(--disp)', letterSpacing: '0.06em' }}>{label}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)', flexShrink: 0 }}>Delivering to</span>
-            <span style={{ fontSize: '0.76rem', color: 'var(--bone)', fontFamily: 'var(--body)', textAlign: 'right' }}>{addressSummary}</span>
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div style={{ height: '1px', background: 'var(--hair2)' }} />
-
-        {/* Action buttons */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <button
-            className="checkout"
-            type="button"
-            onClick={onConfirm}
-            disabled={submitting}
-            style={{ position: 'relative', overflow: 'hidden', opacity: submitting ? 0.65 : 1, cursor: submitting ? 'not-allowed' : 'pointer' }}
-          >
-            {submitting
-              ? 'Processing…'
-              : paymentMethod === 'cod'
-                ? `Confirm · Pay ₹${total.toLocaleString('en-IN')} on Delivery`
-                : `Confirm & Pay ₹${total.toLocaleString('en-IN')}`
-            }
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{
-              background: 'none', border: '1px solid var(--hair2)', borderRadius: '10px',
-              padding: '11px', color: 'var(--dim)', fontFamily: 'var(--disp)', fontSize: '0.65rem',
-              letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
-              transition: 'border-color .2s, color .2s'
-            }}
-          >
-            {paymentMethod === 'cod' ? 'Cancel' : 'Cancel Payment'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  shippingName: string;
+  isMock: boolean;
+  onSuccess: () => void;
+  onBack: () => void;
 }
 
-// ─── RAZORPAY payment form ──────────────────────────────────────────────────
-function RazorpayPaymentForm({ total, shippingName, shippingAddress, phone, cartItems, addressSummary, paymentMethod, onSuccess, onBack }: { total: number; shippingName: string; shippingAddress: string; phone: string; cartItems: any[]; addressSummary: string; paymentMethod: 'card' | 'upi'; onSuccess: () => void; onBack: () => void }) {
+function StripePaymentForm({ clientSecret, orderId, total, shippingName, isMock, onSuccess, onBack }: PaymentFormProps) {
+  const stripe = useStripe();
+  const elements = useElements();
   const [loading, setLoading] = useState(false);
-  const [isScriptLoaded, setIsScriptLoaded] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const submittingRef = React.useRef(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  React.useEffect(() => {
-    const scriptId = 'razorpay-checkout-js';
-    if (document.getElementById(scriptId) || (window as any).Razorpay) {
-      setIsScriptLoaded(true);
-      return;
-    }
-    const script = document.createElement('script');
-    script.id = scriptId;
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.async = true;
-    script.onload = () => setIsScriptLoaded(true);
-    script.onerror = () => setErrorMessage('Failed to load Razorpay SDK. Please check your connection.');
-    document.body.appendChild(script);
-  }, []);
+  const [cardHolder, setCardHolder] = useState(shippingName.toUpperCase() || 'AURA INITIATE');
+  const [cardFlipped, setCardFlipped] = useState(false);
+  const [cardBrand, setCardBrand] = useState('AURA CARD');
 
-  const doRazorpaySubmit = async () => {
-    if (!isScriptLoaded || !(window as any).Razorpay) {
-      setErrorMessage('Razorpay SDK is not loaded yet. Please wait.');
-      return;
-    }
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setShowConfirmModal(false);
+  // const handleSubmit = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   if (!stripe || !elements) return;
+
+  //   setLoading(true);
+  //   setErrorMessage('');
+
+  //   const cardNumberElement = elements.getElement(CardNumberElement);
+  //   if (!cardNumberElement) return;
+
+  //   const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
     setLoading(true);
     setErrorMessage('');
 
-    try {
-      const initRes = await fetch('/api/payment/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: cartItems.map((item: any) => ({
-            productId: item.pid,
-            size: item.size,
-            quantity: item.qty
-          }))
-        }),
-      });
-      const initData = await initRes.json();
-      
-      if (!initRes.ok) {
-        throw new Error(initData.error || 'Failed to initiate order');
+    // ─── MOCK MODE: skip real Stripe confirmation entirely ───────────
+    if (isMock) {
+      await new Promise(r => setTimeout(r, 700)); // brief fake "processing" delay
+      onSuccess();
+      return;
+    }
+
+    if (!stripe || !elements) return;
+
+    const cardNumberElement = elements.getElement(CardNumberElement);
+    if (!cardNumberElement) return;
+
+    const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+      payment_method: {
+        card: cardNumberElement,
+        billing_details: {
+          name: shippingName,
+        },
+      },
+    });
+
+    if (error) {
+      console.error('[Payment Error]', error);
+      setErrorMessage(error.message || 'Payment initiation failed.');
+      setLoading(false);
+    } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+      // simulated webhook trigger fallback for immediate local validation
+      try {
+        await fetch('/api/webhooks/stripe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'payment_intent.succeeded',
+            data: {
+              object: {
+                id: paymentIntent.id,
+                metadata: { orderId: orderId }
+              }
+            }
+          })
+        });
+      } catch (err) {
+        console.error('Simulated webhook trigger warning:', err);
       }
 
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: initData.total * 100,
-        currency: "INR",
-        name: "Aura Farming",
-        description: "Aura Farming Order",
-        order_id: initData.razorpayOrderId,
-        prefill: {
-          name: shippingName,
-          contact: phone,
-        },
-        theme: {
-          color: "#e10600",
-        },
-        handler: async function (response: any) {
-          try {
-            const verifyRes = await fetch('/api/payment/verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                ...response,
-                shipping_name: shippingName,
-                shipping_address: shippingAddress,
-                phone,
-                payment_method: paymentMethod,
-                subtotal: initData.subtotal,
-                convenienceFee: initData.convenienceFee,
-                platformFee: initData.platformFee,
-                deliveryFee: initData.deliveryFee,
-                codFee: initData.codFee,
-                shippingFee: initData.shippingFee,
-                total: initData.total,
-                validatedItems: initData.validatedItems
-              }),
-            });
-            const verifyData = await verifyRes.json();
-            if (verifyRes.ok && verifyData.success) {
-              submittingRef.current = false;
-              onSuccess();
-            } else {
-              setErrorMessage(verifyData.error || 'Payment verification failed.');
-              setLoading(false);
-              submittingRef.current = false;
-            }
-          } catch {
-            setErrorMessage('Network error during verification.');
-            setLoading(false);
-            submittingRef.current = false;
-          }
-        },
-        modal: {
-          ondismiss: function () {
-            setLoading(false);
-            submittingRef.current = false;
-          }
-        }
-      };
-
-      const rzp = new (window as any).Razorpay(options);
-      rzp.on('payment.failed', function (response: any) {
-        setErrorMessage(response.error.description || 'Payment failed.');
-        setLoading(false);
-        submittingRef.current = false;
-      });
-      rzp.open();
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Error initiating payment');
+      onSuccess();
+    } else {
+      setErrorMessage('Unexpected transaction status.');
       setLoading(false);
-      submittingRef.current = false;
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setShowConfirmModal(true);
+  const handleCardNumChange = (event: any) => {
+    if (event.brand) {
+      setCardBrand(event.brand.toUpperCase());
+    }
+  };
+
+  const stripeElementStyle = {
+    style: {
+      base: {
+        color: '#ece8e1',
+        fontFamily: '"Inter Tight", sans-serif',
+        fontSize: '14px',
+        lineHeight: '24px',
+        '::placeholder': {
+          color: '#65625e',
+        },
+      },
+      invalid: {
+        color: '#e10600',
+      },
+    },
   };
 
   return (
-    <>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-        <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'center', margin: '20px 0' }}>
-          Checkout with Razorpay
-        </div>
-        {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
-        <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', marginTop: '6px', fontFamily: 'var(--body)' }}>
-          By placing this order, you agree to Aura Farming's T&amp;C
-        </div>
-        <button className="checkout" type="submit" disabled={loading || !isScriptLoaded}>
-          {loading ? 'Processing...' : !isScriptLoaded ? 'Loading Razorpay...' : `Pay ₹${total.toLocaleString('en-IN')}`}
-        </button>
-        <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
-          ← Back to Shipping
-        </button>
-      </form>
-      <PayConfirmModal
-        open={showConfirmModal}
-        total={total}
-        paymentMethod={paymentMethod}
-        addressSummary={addressSummary}
-        submitting={loading}
-        onConfirm={doRazorpaySubmit}
-        onCancel={() => { setShowConfirmModal(false); onBack(); }}
-      />
-    </>
-  );
-}
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {/* 3D Card Visualizer */}
+      <div className="card-wrapper" style={{ perspective: '1000px', width: '100%', aspectRatio: '280/160', margin: '10px 0 16px', userSelect: 'none' }}>
+        <div style={{
+          width: '100%',
+          height: '100%',
+          position: 'relative',
+          transformStyle: 'preserve-3d',
+          transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+          transform: cardFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
+        }}>
 
-
-// ─── Shared order summary breakdown shown above all payment forms ─────────────
-function OrderSummary({ bagTotal, isCOD }: { bagTotal: number; isCOD: boolean }) {
-  const deliveryFee  = isCOD ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID;
-  const codFeeAmt    = isCOD ? COD_FEE_CHARGE : 0;
-  const orderTotal   = bagTotal + CONVENIENCE_FEE + PLATFORM_FEE + deliveryFee + codFeeAmt;
-
-  const rows: Array<{ label: string; value?: string; deliveryFree?: boolean; green?: boolean; bold?: boolean }> = [
-    { label: 'Bag Total',       value: `₹${bagTotal.toLocaleString('en-IN')}` },
-    { label: 'Bag Discount',    value: '₹0', green: true },
-    { label: 'Convenience Fee', value: `₹${CONVENIENCE_FEE}` },
-    { label: 'Delivery Fee',    deliveryFree: !isCOD, value: isCOD ? `₹${DELIVERY_FEE_COD}` : undefined },
-    { label: 'Platform Fee',    value: `₹${PLATFORM_FEE}` },
-    ...(isCOD ? [{ label: 'Cash on Delivery Fee', value: `₹${COD_FEE_CHARGE}` }] : []),
-  ];
-
-  return (
-    <div style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: '1px solid var(--hair2)',
-      borderRadius: '10px',
-      padding: '12px 14px',
-      marginBottom: '14px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px'
-    }}>
-      <div style={{ color: 'var(--dim2)', fontFamily: 'var(--disp)', fontSize: '0.58rem', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '4px' }}>
-        Order Summary
-      </div>
-      {rows.map(row => (
-        <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
-          <span>{row.label}</span>
-          {row.deliveryFree ? (
-            <span>
-              <s style={{ marginRight: '4px', opacity: 0.45, fontSize: '0.65rem' }}>₹49</s>
-              <span style={{ color: '#4caf78', fontWeight: 700 }}>FREE</span>
-            </span>
-          ) : (
-            <span style={{ color: row.green ? '#4caf78' : 'var(--bone)' }}>{row.value}</span>
-          )}
-        </div>
-      ))}
-      <div style={{ height: '1px', background: 'var(--hair2)', margin: '4px 0' }} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--bone)', fontFamily: 'var(--disp)', letterSpacing: '0.04em' }}>
-        <span>Order Total</span>
-        <span style={{ fontWeight: 700 }}>₹{orderTotal.toLocaleString('en-IN')}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── COD payment screen ───────────────────────────────────────────────────────
-function CodPaymentScreen({ total, bagTotal, addressSummary, onConfirm, onBack }: { total: number; bagTotal: number; addressSummary: string; onConfirm: () => void; onBack: () => void }) {
-  const [showCodTooltip, setShowCodTooltip] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const submittingRef = React.useRef(false);
-
-  const handleCodConfirm = () => {
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    setShowConfirmModal(false);
-    onConfirm();
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* Header block */}
-      <div style={{
-        background: 'var(--ink)',
-        border: '1px solid var(--hair2)',
-        borderRadius: '12px',
-        padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '1.4rem' }}>📦</span>
-          <div>
-            <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-              Cash on Delivery
+          {/* Card Front */}
+          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', background: 'linear-gradient(135deg, var(--coal2), var(--ink))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ width: '44px', height: '32px', background: 'rgba(236,232,225,0.12)', borderRadius: '6px' }}></div>
+              <div style={{ fontFamily: 'var(--disp)', fontSize: '0.9rem', color: 'var(--bone)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{cardBrand}</div>
             </div>
-            <div style={{ color: 'var(--dim)', fontSize: '0.7rem', marginTop: '2px', fontFamily: 'var(--body)', lineHeight: 1.4 }}>
-              For safe, contactless and hassle free delivery, pay using card/wallet/netbanking
+            <div style={{ fontFamily: 'monospace', fontSize: '1.15rem', letterSpacing: '0.15em', wordSpacing: '0.1em', color: 'var(--bone)' }}>•••• •••• •••• ••••</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <div style={{ minWidth: 0, flex: 1, paddingRight: '10px' }}>
+                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Cardholder</div>
+                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardHolder}</div>
+              </div>
+              <div style={{ flex: '0 0 auto' }}>
+                <div style={{ fontSize: '0.48rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em', marginBottom: '2px' }}>Expires</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--bone)', letterSpacing: '0.05em' }}>MM/YY</div>
+              </div>
             </div>
+          </div>
+
+          {/* Card Back */}
+          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', background: 'linear-gradient(135deg, var(--ink), var(--coal))', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px 0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+            <div style={{ width: '100%', height: '38px', background: '#000', marginTop: '10px' }}></div>
+            <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px' }}>
+                <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.1em' }}>CVV</div>
+                <div style={{ width: '54px', height: '30px', background: 'var(--bone)', color: 'var(--ink)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 700, letterSpacing: '0.05em' }}>•••</div>
+              </div>
+            </div>
+            <div style={{ padding: '0 20px', fontSize: '0.55rem', color: 'var(--dim2)', textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>Wear the mark. Align details.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Stripe Secure Inputs */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label className="foot-label">Card Number</label>
+          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+            <CardNumberElement options={stripeElementStyle} onChange={handleCardNumChange} />
           </div>
         </div>
 
-        {/* COD fee note with tooltip */}
-        <div style={{
-          background: 'rgba(225,6,0,0.05)',
-          border: '1px solid rgba(225,6,0,0.18)',
-          borderRadius: '8px',
-          padding: '8px 12px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'relative'
-        }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--dim)', fontFamily: 'var(--body)' }}>
-            ₹{COD_FEE_CHARGE} will be charged additional for Cash on Delivery
-          </span>
-          <span
-            onClick={() => setShowCodTooltip(!showCodTooltip)}
-            onMouseEnter={() => setShowCodTooltip(true)}
-            onMouseLeave={() => setShowCodTooltip(false)}
-            style={{ fontSize: '0.62rem', color: 'var(--red)', cursor: 'pointer', borderBottom: '1px dotted var(--red)', userSelect: 'none', fontFamily: 'var(--disp)', letterSpacing: '0.05em', flexShrink: 0, marginLeft: '8px' }}
-          >
-            What's this?
-          </span>
-          {showCodTooltip && (
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 6px)', right: 0,
-              background: 'var(--coal2)', border: '1px solid var(--hair2)', borderRadius: '8px',
-              padding: '8px 12px', fontSize: '0.7rem', color: 'var(--dim)', zIndex: 100,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.5)', width: '200px', pointerEvents: 'none',
-              lineHeight: 1.4, fontFamily: 'var(--body)'
-            }}>
-              This ₹{COD_FEE_CHARGE} fee covers COD handling costs — packaging, verification, and doorstep cash collection logistics.
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label className="foot-label">Cardholder Name</label>
+          <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '0', background: 'var(--ink)' }}>
+            <input
+              type="text"
+              placeholder="Akash"
+              value={cardHolder}
+              onChange={(e) => setCardHolder(e.target.value.toUpperCase() || 'AURA INITIATE')}
+              required
+              style={{ padding: '10px 14px', background: 'transparent', border: '0', color: 'var(--bone)' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label className="foot-label">Expiry Date</label>
+            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <CardExpiryElement options={stripeElementStyle} />
             </div>
-          )}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label className="foot-label">CVV / Code</label>
+            <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px', padding: '10px 14px', background: 'var(--ink)', border: '1px solid var(--hair2)' }}>
+              <CardCvcElement
+                options={stripeElementStyle}
+                onFocus={() => setCardFlipped(true)}
+                onBlur={() => setCardFlipped(false)}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Order summary breakdown */}
-      <OrderSummary bagTotal={bagTotal} isCOD={true} />
+      {errorMessage && <div style={{ color: 'var(--red)', fontSize: '0.8rem', textAlign: 'center', marginTop: '4px' }}>{errorMessage}</div>}
 
-      {/* T&C */}
-      <div style={{ color: 'var(--dim2)', fontSize: '0.68rem', textAlign: 'center', fontFamily: 'var(--body)' }}>
-        By placing this order, you agree to Aura Farming's T&amp;C
-      </div>
-
-      <button className="checkout" type="button" disabled={submitting} onClick={() => setShowConfirmModal(true)}
-        style={{ opacity: submitting ? 0.65 : 1, cursor: submitting ? 'not-allowed' : 'pointer' }}>
-        {submitting ? 'Placing order…' : `Place Order ₹${total.toLocaleString('en-IN')}`}
+      <button className="checkout" id="submitPaymentBtn" type="submit" disabled={loading || !stripe}>
+        {loading ? 'Processing initiation details...' : `Pay ₹${total.toLocaleString('en-IN')}`}
       </button>
 
-      <button className="icon-btn" type="button" onClick={onBack} style={{ margin: '0 auto', fontSize: '0.62rem', color: 'var(--dim)' }}>
-        ← Cancel
+      <button className="icon-btn" id="backToShippingBtn" type="button" onClick={onBack} style={{ margin: '0 auto', gap: '4px', fontSize: '0.62rem', color: 'var(--dim)' }}>
+        &larr; Back to Shipping
       </button>
-
-      <PayConfirmModal
-        open={showConfirmModal}
-        total={total}
-        paymentMethod="cod"
-        addressSummary={addressSummary}
-        submitting={submitting}
-        onConfirm={handleCodConfirm}
-        onCancel={() => { setShowConfirmModal(false); onBack(); }}
-      />
-    </div>
+    </form>
   );
 }
-const parseSqlDate = (ds: any) => {
-  if (!ds || ds === 'CURRENT_TIMESTAMP') return new Date();
-  const s = String(ds);
-  return new Date(s.endsWith('Z') ? s : s + ' UTC');
-};
 
 export default function Storefront() {
   const splitWord = (word: string, rowIndex: number) => {
@@ -597,22 +289,12 @@ export default function Storefront() {
   const [activeCat, setActiveCat] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
-    if (typeof window !== 'undefined') {
-      try { const stored = localStorage.getItem('aura_search_history'); if (stored) return JSON.parse(stored); } catch {}
-    }
-    return [];
-  });
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [searchFocused, setSearchFocused] = useState(false);
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try { const stored = localStorage.getItem('aura_cart'); if (stored) return JSON.parse(stored); } catch {}
-    }
-    return [];
-  });
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [cardSizes, setCardSizes] = useState<Record<string, string>>({});
-  
+
   // Auth drawer states
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'profile'>('login');
@@ -646,36 +328,15 @@ export default function Storefront() {
   // Details Modal states
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [detailSize, setDetailSize] = useState('M');
-  const [detailOpenedFromWishlist, setDetailOpenedFromWishlist] = useState(false);
 
   // Checkout Wizard states
-  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
-  // Shipping form fields
-  const [checkoutName, setCheckoutName]       = useState('');
-  const [checkoutMobile, setCheckoutMobile]   = useState('');
-  const [checkoutPhone, setCheckoutPhone]     = useState('');  // WhatsApp (defaults to mobile)
-  const [checkoutPin, setCheckoutPin]         = useState('');
-  const [checkoutLocality, setCheckoutLocality] = useState('');
-  const [checkoutFlat, setCheckoutFlat]       = useState('');
-  const [checkoutLandmark, setCheckoutLandmark] = useState('');
-  const [checkoutCity, setCheckoutCity]       = useState('');
-  const [checkoutState, setCheckoutState]     = useState('');
-  const [checkoutAddressType, setCheckoutAddressType] = useState<'Home' | 'Work' | 'Others'>('Home');
-  // Inline validation errors
-  const [mobileError, setMobileError]         = useState('');
-  const [formErrors, setFormErrors]           = useState<Record<string, string>>({});
-  // Legacy: keep checkoutAddress for the order payload build (assembled on submit)
+  const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment'>('cart');
+  const [checkoutName, setCheckoutName] = useState('');
   const [checkoutAddress, setCheckoutAddress] = useState('');
-  
-  // Saved addresses system states
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
-  const [addressMode, setAddressMode] = useState<'summary' | 'list' | 'add' | 'edit'>('summary');
-  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
-  const [checkoutIsDefault, setCheckoutIsDefault] = useState(false);
+  const [clientSecret, setClientSecret] = useState('');
+  const [checkoutOrderId, setCheckoutOrderId] = useState('');
   const [checkoutTotal, setCheckoutTotal] = useState(0);
-  const [checkoutBagTotal, setCheckoutBagTotal] = useState(0); // pre-fee subtotal for OrderSummary
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'card' | 'upi' | 'cod'>('card');
+  const [isMockPayment, setIsMockPayment] = useState(false);
 
   // Tracking Portal states
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -686,10 +347,6 @@ export default function Storefront() {
   const [toastShow, setToastShow] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
-  // Email verification states
-  const [unverifiedEmail, setUnverifiedEmail] = useState('');
-  const [resendingVerification, setResendingVerification] = useState(false);
-
   // Ref nodes
   const threadSvgRef = useRef<SVGSVGElement>(null);
   const lineRef = useRef<SVGPathElement>(null);
@@ -698,6 +355,7 @@ export default function Storefront() {
   const flowRef = useRef<SVGPathElement>(null);
   const tipRef = useRef<SVGCircleElement>(null);
   const tipGlowRef = useRef<SVGCircleElement>(null);
+  const cardRefs = useRef<{ [key: string]: HTMLElement | null }>({});
 
   const fly = (msg: string) => {
     setToastMessage(msg);
@@ -710,6 +368,30 @@ export default function Storefront() {
       return () => clearTimeout(t);
     }
   }, [toastShow]);
+
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch('/api/orders/my-orders');
+      if (res.ok) {
+        const data = await res.json();
+        setUserOrders(data);
+      }
+    } catch (err) {
+      console.error('Error loading orders:', err);
+    }
+  };
+
+  const fetchWishlist = async () => {
+    try {
+      const res = await fetch('/api/wishlist');
+      if (res.ok) {
+        const data = await res.json();
+        setWishlistItems(data);
+      }
+    } catch (err) {
+      console.error('Error loading wishlist:', err);
+    }
+  };
 
   // Load catalog products from database
   useEffect(() => {
@@ -724,9 +406,7 @@ export default function Storefront() {
           cat: item.category,
           catLabel: item.categoryLabel || item.category_label,
           art: (item.artSvgKey || item.art_svg_key) as any,
-          stock: item.stock,
-          isLimited: !!item.isLimited || !!item.is_limited,
-          isCustomizable: !!item.isCustomizable || !!item.is_customizable,
+          stock: item.stock
         }));
         setProductsList(formatted);
       })
@@ -741,63 +421,22 @@ export default function Storefront() {
           setUpdateAddress((res.data.user as any).shippingAddress || '');
           fetchOrders();
           fetchWishlist();
-          fetchAddresses();
         }
       });
 
+    // Sync cart from browser localStorage
+    try {
+      const stored = localStorage.getItem('aura_cart');
+      if (stored) setCart(JSON.parse(stored));
+    } catch (_) { }
+
+    // Sync search history from browser localStorage
+    try {
+      const storedHistory = localStorage.getItem('aura_search_history');
+      if (storedHistory) setSearchHistory(JSON.parse(storedHistory));
+    } catch (_) { }
   }, []);
-
-  async function fetchOrders() {
-    try {
-      const res = await fetch('/api/orders/my-orders');
-      if (res.ok) {
-        const data = await res.json();
-        setUserOrders(data);
-      }
-    } catch (err) {
-      console.error('Error loading orders:', err);
-    }
-  };
-
-  async function fetchWishlist() {
-    try {
-      const res = await fetch('/api/wishlist');
-      if (res.ok) {
-        const data = await res.json();
-        setWishlistItems(data);
-      }
-    } catch (err) {
-      console.error('Error loading wishlist:', err);
-    }
-  };
-
-  async function fetchAddresses() {
-    try {
-      const res = await fetch('/api/addresses');
-      if (res.ok) {
-        const data = await res.json();
-        setSavedAddresses(data);
-        if (data.length > 0) {
-          const def = data.find((a: Address) => a.isDefault) || data[0];
-          setSelectedAddress(def);
-          
-          setCheckoutName(def.name);
-          setCheckoutMobile(def.mobile);
-          setCheckoutPhone(def.whatsappNumber || def.mobile);
-          const formatted = `${def.flatNumber}, ${def.locality}, ${def.landmark}, ${def.city}, ${def.state} - ${def.pinCode} [${def.addressType}]`;
-          setCheckoutAddress(formatted);
-          setAddressMode('summary');
-        } else {
-          setSelectedAddress(null);
-          setAddressMode('add');
-        }
-      }
-    } catch (err) {
-      console.error('Error loading addresses:', err);
-    }
-  };
-
-  async function fetchAdminStats() {
+  const fetchAdminStats = async () => {
     try {
       const res = await fetch('/api/admin/stats');
       if (res.ok) {
@@ -809,7 +448,7 @@ export default function Storefront() {
     }
   };
 
-  const toggleWishlist = async (productId: string, size?: string) => {
+  const toggleWishlist = async (productId: string) => {
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -820,14 +459,14 @@ export default function Storefront() {
       const res = await fetch('/api/wishlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, size: size || 'M' })
+        body: JSON.stringify({ productId })
       });
       if (res.ok) {
         const data = await res.json();
         fly(data.message);
         fetchWishlist();
       }
-    } catch {
+    } catch (_) {
       fly('Error updating favorites');
     }
   };
@@ -863,19 +502,13 @@ export default function Storefront() {
       fly('Email and password credentials are required.');
       return;
     }
-    setUnverifiedEmail('');
     const { data, error } = await authClient.signIn.email({
       email: loginEmail,
       password: loginPassword
     });
 
     if (error) {
-      if (error.code === 'EMAIL_NOT_VERIFIED' || error.message?.toLowerCase().includes('verify')) {
-        setUnverifiedEmail(loginEmail);
-        fly('Please verify your email before logging in.');
-      } else {
-        fly(error.message || 'Login details invalid.');
-      }
+      fly(error.message || 'Login details invalid.');
     } else {
       setUser(data.user);
       setUpdateName(data.user.name);
@@ -883,7 +516,6 @@ export default function Storefront() {
       fly(`Initiation authenticated: welcome back, ${data.user.name}`);
       fetchOrders();
       fetchWishlist();
-      fetchAddresses();
       setAuthOpen(false);
       setLoginEmail('');
       setLoginPassword('');
@@ -897,7 +529,7 @@ export default function Storefront() {
       fly('All inputs are required.');
       return;
     }
-    const { error } = await authClient.signUp.email({
+    const { data, error } = await authClient.signUp.email({
       name: regName,
       email: regEmail,
       password: regPassword
@@ -906,28 +538,15 @@ export default function Storefront() {
     if (error) {
       fly(error.message || 'Registration failed.');
     } else {
-      fly('Initiation registered. Please check your email to verify your account.');
-      setAuthMode('login');
-      setUnverifiedEmail(regEmail);
+      setUser(data.user);
+      setUpdateName(data.user.name);
+      setUpdateAddress((data.user as any).shippingAddress || '');
+      fly(`Registration complete. Welcome to Aura Farming, ${data.user.name}`);
+      fetchWishlist();
+      setAuthOpen(false);
       setRegName('');
       setRegEmail('');
       setRegPassword('');
-    }
-  };
-
-  // Resend verification email helper
-  const handleResendVerification = async () => {
-    if (!unverifiedEmail) return;
-    setResendingVerification(true);
-    const { error } = await authClient.sendVerificationEmail({
-      email: unverifiedEmail,
-      callbackURL: window.location.origin
-    });
-    setResendingVerification(false);
-    if (error) {
-      fly(error.message || 'Failed to resend verification email.');
-    } else {
-      fly('Verification email resent. Please check your inbox.');
     }
   };
 
@@ -952,7 +571,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Failed to update settings');
       }
-    } catch {
+    } catch (err) {
       fly('Error updating profile');
     }
   };
@@ -979,7 +598,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Password update failed');
       }
-    } catch {
+    } catch (err) {
       fly('Error updating password');
     }
   };
@@ -994,7 +613,7 @@ export default function Storefront() {
     setAuthOpen(false);
     // Clear cart from state AND localStorage so it doesn't rehydrate after login
     setCart([]);
-    try { localStorage.removeItem('aura_cart'); } catch {}
+    try { localStorage.removeItem('aura_cart'); } catch (_) { }
     fly('Logged out successfully.');
   };
 
@@ -1004,160 +623,42 @@ export default function Storefront() {
     fetchAdminStats();
   };
 
-  // Selects an address for checkout and updates summary values
-  const selectActiveAddress = (addr: Address) => {
-    setSelectedAddress(addr);
-    setCheckoutName(addr.name);
-    setCheckoutMobile(addr.mobile);
-    setCheckoutPhone(addr.whatsappNumber || addr.mobile);
-    const formatted = `${addr.flatNumber}, ${addr.locality}, ${addr.landmark}, ${addr.city}, ${addr.state} - ${addr.pinCode} [${addr.addressType}]`;
-    setCheckoutAddress(formatted);
-    setAddressMode('summary');
-  };
-
-  // Pre-fills form fields for editing an address
-  const startEditingAddress = (addr: Address) => {
-    setEditingAddressId(addr.id);
-    setCheckoutName(addr.name);
-    setCheckoutMobile(addr.mobile);
-    setCheckoutPhone(addr.whatsappNumber || '');
-    setCheckoutPin(addr.pinCode);
-    setCheckoutLocality(addr.locality);
-    setCheckoutFlat(addr.flatNumber);
-    setCheckoutLandmark(addr.landmark);
-    setCheckoutCity(addr.city);
-    setCheckoutState(addr.state);
-    setCheckoutAddressType(addr.addressType);
-    setCheckoutIsDefault(addr.isDefault);
-    setMobileError('');
-    setFormErrors({});
-    setAddressMode('edit');
-  };
-
-  // Shipping form submit → validate all fields, save/update address in DB, then select it and show summary
+  // Checkout POST to create pending order and Stripe PaymentIntent
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const errors: Record<string, string> = {};
-    if (!checkoutName.trim())     errors.name     = 'Name is required.';
-    if (!checkoutMobile.trim() || !/^[0-9]{10}$/.test(checkoutMobile.trim()))
-      errors.mobile = 'Please enter a valid 10 digit mobile number.';
-    if (!checkoutPin.trim() || !/^[0-9]{6}$/.test(checkoutPin.trim()))
-      errors.pin = 'Please enter a valid 6 digit pin code.';
-    if (!checkoutLocality.trim()) errors.locality  = 'Locality / Area / Street is required.';
-    if (!checkoutFlat.trim())     errors.flat      = 'Flat number / Building Name is required.';
-    if (!checkoutLandmark.trim()) errors.landmark  = 'Landmark is required.';
-    if (!checkoutCity.trim())     errors.city      = 'District / City is required.';
-    if (!checkoutState.trim())    errors.state     = 'State is required.';
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
-      fly('Please fix the highlighted errors.');
+    if (!checkoutName || !checkoutAddress) {
+      fly('Recipient name and address are required.');
       return;
     }
-    setFormErrors({});
-    setMobileError('');
 
     try {
-      const isEdit = addressMode === 'edit' && editingAddressId;
-      const url = isEdit ? `/api/addresses/${editingAddressId}` : '/api/addresses';
-      const method = isEdit ? 'PUT' : 'POST';
+      const payload = {
+        shipping_name: checkoutName,
+        shipping_address: checkoutAddress,
+        items: cart.map(item => ({
+          productId: item.pid,
+          size: item.size,
+          quantity: item.qty
+        }))
+      };
 
-      const res = await fetch(url, {
-        method,
+      const res = await fetch('/api/orders', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: checkoutName,
-          mobile: checkoutMobile,
-          whatsappNumber: checkoutPhone || null,
-          pinCode: checkoutPin,
-          locality: checkoutLocality,
-          flatNumber: checkoutFlat,
-          landmark: checkoutLandmark,
-          city: checkoutCity,
-          state: checkoutState,
-          addressType: checkoutAddressType,
-          isDefault: checkoutIsDefault
-        })
+        body: JSON.stringify(payload)
       });
-
+      const data = await res.json();
       if (res.ok) {
-        fly(isEdit ? 'Address updated successfully.' : 'Address saved successfully.');
-        await fetchAddresses();
-        setAddressMode('summary');
-        handleShippingReset();
-      } else {
-        const data = await res.json();
-        fly(data.error || 'Failed to save address coordinates.');
-      }
-    } catch {
-      fly('Address API connection failed.');
-    }
-  };
-
-  // Reset all shipping form fields
-  const handleShippingReset = () => {
-    setCheckoutName('');
-    setCheckoutMobile('');
-    setCheckoutPhone('');
-    setCheckoutPin('');
-    setCheckoutLocality('');
-    setCheckoutFlat('');
-    setCheckoutLandmark('');
-    setCheckoutCity('');
-    setCheckoutState('');
-    setCheckoutAddressType('Home');
-    setCheckoutIsDefault(false);
-    setMobileError('');
-    setFormErrors({});
-  };
-
-  // Called after payment method is confirmed — creates order and routes appropriately
-  const handlePaymentMethodConfirm = async (method: 'card' | 'upi' | 'cod') => {
-    setSelectedPaymentMethod(method);
-    
-    if (method === 'cod') {
-      try {
-        const payload = {
-          shipping_name: checkoutName,
-          shipping_address: checkoutAddress,
-          phone: checkoutPhone || checkoutMobile,
-          payment_method: method,
-          items: cart.map(item => ({
-            productId: item.pid,
-            size: item.size,
-            quantity: item.qty
-          }))
-        };
-
-        const res = await fetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          fly(data.error || 'Failed to initialize checkout');
-          return;
-        }
-
-        // COD: show the COD info screen (part of 'payment' step)
+        setClientSecret(data.clientSecret);
+        setCheckoutOrderId(data.orderId);
         setCheckoutTotal(data.total);
-        setCheckoutBagTotal(data.subtotal);
+        setIsMockPayment(!!data.mock);
         setCheckoutStep('payment');
-      } catch {
-        fly('Checkout connection failed');
+      } else {
+        fly(data.error || 'Failed to initialize checkout');
       }
-    } else {
-      // For card or upi, RazorpayPaymentForm handles API calls directly.
-      // We just compute expected totals to render the summary accurately.
-      const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
-      const convenienceFee = cart.length === 0 ? 0 : CONVENIENCE_FEE;
-      const platformFee = cart.length === 0 ? 0 : PLATFORM_FEE;
-      const deliveryFee = DELIVERY_FEE_PREPAID;
-      const total = subtotal + convenienceFee + platformFee + deliveryFee;
-      
-      setCheckoutTotal(total);
-      setCheckoutBagTotal(subtotal);
-      setCheckoutStep('payment');
+    } catch (err) {
+      fly('Checkout connection failed');
     }
   };
 
@@ -1183,7 +684,7 @@ export default function Storefront() {
         const err = await res.json();
         fly(err.error || 'Failed to update stock.');
       }
-    } catch {
+    } catch (_) {
       fly('Restock connection error');
     }
   };
@@ -1205,7 +706,7 @@ export default function Storefront() {
         const err = await res.json();
         fly(err.error || 'Failed to override status.');
       }
-    } catch {
+    } catch (_) {
       fly('Override connection error');
     }
   };
@@ -1222,7 +723,7 @@ export default function Storefront() {
       } else {
         fly(data.error || 'Order ID not recognized.');
       }
-    } catch {
+    } catch (_) {
       fly('Tracking connection error.');
     }
   };
@@ -1230,21 +731,16 @@ export default function Storefront() {
   // Helper properties
   const cartQty = cart.reduce((a, c) => a + c.qty, 0);
   const cartSubtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
-  const isCODSelected = selectedPaymentMethod === 'cod';
-  // Derived fee breakdown for the cart summary
-  const cartDeliveryFee = (cartQty === 0) ? 0 : (isCODSelected ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID);
-  const cartCodFee      = (cartQty === 0) ? 0 : (isCODSelected ? COD_FEE_CHARGE : 0);
-  const cartConvFee     = cartQty === 0 ? 0 : CONVENIENCE_FEE;
-  const cartPlatFee     = cartQty === 0 ? 0 : PLATFORM_FEE;
-  const cartTotal = cartSubtotal + cartConvFee + cartPlatFee + cartDeliveryFee + cartCodFee;
+  const cartShippingFee = cartSubtotal >= 4999 || cartQty === 0 ? 0 : 199;
+  const cartTotal = cartSubtotal + cartShippingFee;
 
   const updateLocalStorage = (newCart: CartItem[]) => {
     try {
       localStorage.setItem('aura_cart', JSON.stringify(newCart));
-    } catch {}
+    } catch (_) { }
   };
 
-  const addToCart = (p: Product, size: string, color?: string, customText?: string) => {
+  const addToCart = (p: Product, size: string) => {
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -1252,11 +748,11 @@ export default function Storefront() {
       return;
     }
     const updated = [...cart];
-    const found = updated.find(c => c.pid === p.id && c.size === size && c.color === color && c.customText === customText);
+    const found = updated.find(c => c.pid === p.id && c.size === size);
     if (found) {
       found.qty++;
     } else {
-      updated.push({ pid: p.id, name: p.name, price: p.price, art: p.art, size: size, qty: 1, color, customText });
+      updated.push({ pid: p.id, name: p.name, price: p.price, art: p.art, size: size, qty: 1 });
     }
     setCart(updated);
     updateLocalStorage(updated);
@@ -1462,7 +958,7 @@ export default function Storefront() {
           } else {
             flow.style.opacity = '0';
           }
-        } catch {}
+        } catch (_) { }
       }
 
       animeId = requestAnimationFrame(tickThread);
@@ -1612,7 +1108,7 @@ export default function Storefront() {
       const y = window.scrollY;
       const hh = heroEl.offsetHeight || 1;
       const p = Math.min(1, y / hh);
-      
+
       const pdx = tmx - mx;
       const pdy = tmy - my;
       mx += pdx * 0.06;
@@ -1642,16 +1138,10 @@ export default function Storefront() {
 
   // Filter storefront cards matching search and tab states
   const filteredProducts = productsList.filter(p => {
-    let matchesCat: boolean;
-    if (activeCat === 'all') matchesCat = true;
-    else if (activeCat === 'limited') matchesCat = p.isLimited;
-    else if (activeCat === 'customize') matchesCat = p.isCustomizable;
-    else matchesCat = p.cat === activeCat;
+    const matchesCat = activeCat === 'all' || p.cat === activeCat;
     const matchesSearch = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.desc.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCat && matchesSearch;
   });
-
-  const limitedCount = productsList.filter(p => p.isLimited).length;
 
   return (
     <>
@@ -1662,14 +1152,14 @@ export default function Storefront() {
         <defs>
           <g id="rune">
             <g fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="square">
-              <path d="M50 14 V126"/>
-              <path d="M40 24 L50 8 L60 24"/>
-              <path d="M14 16 L50 70"/>
-              <path d="M86 16 L50 70"/>
-              <path d="M50 58 L88 95 L50 132 L12 95 Z"/>
-              <path d="M18 64 H82"/>
-              <path d="M26 55 V73"/>
-              <path d="M74 55 V73"/>
+              <path d="M50 14 V126" />
+              <path d="M40 24 L50 8 L60 24" />
+              <path d="M14 16 L50 70" />
+              <path d="M86 16 L50 70" />
+              <path d="M50 58 L88 95 L50 132 L12 95 Z" />
+              <path d="M18 64 H82" />
+              <path d="M26 55 V73" />
+              <path d="M74 55 V73" />
             </g>
           </g>
         </defs>
@@ -1679,23 +1169,23 @@ export default function Storefront() {
       <svg id="thread" ref={threadSvgRef} aria-hidden="true" style={{ position: 'absolute', pointerEvents: 'none', left: 0, top: 0, zIndex: 1, width: '100%' }}>
         <defs>
           <linearGradient id="threadGrad" x1="0" y1="0" x2="0" y2="1" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#ff2418"/>
-            <stop offset=".5" stopColor="#e10600"/>
-            <stop offset="1" stopColor="#8f0400"/>
+            <stop offset="0" stopColor="#ff2418" />
+            <stop offset=".5" stopColor="#e10600" />
+            <stop offset="1" stopColor="#8f0400" />
           </linearGradient>
         </defs>
-        <path className="ghost" ref={ghostRef} d=""/>
-        <path id="threadBloom" ref={bloomRef} d=""/>
-        <path id="threadLine" ref={lineRef} d=""/>
-        <path id="threadFlow" ref={flowRef} d=""/>
-        <circle id="threadTipGlow" ref={tipGlowRef} r="9" cx="-40" cy="-40"/>
-        <circle id="threadTip" ref={tipRef} r="4" cx="-40" cy="-40"/>
+        <path className="ghost" ref={ghostRef} d="" />
+        <path id="threadBloom" ref={bloomRef} d="" />
+        <path id="threadLine" ref={lineRef} d="" />
+        <path id="threadFlow" ref={flowRef} d="" />
+        <circle id="threadTipGlow" ref={tipGlowRef} r="9" cx="-40" cy="-40" />
+        <circle id="threadTip" ref={tipRef} r="4" cx="-40" cy="-40" />
       </svg>
 
       {/* NAVBAR */}
       <nav id="nav">
         <a className="brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} role="button" tabIndex={0} aria-label="Aura Farming home">
-          <img src="data:image/png;base64,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"/>
+          <img src="data:image/png;base64,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" />
         </a>
         <div className="nav-right">
           <div className={`search-container ${searchOpen ? 'open' : ''}`} style={{ position: 'relative' }}>
@@ -1717,8 +1207,8 @@ export default function Storefront() {
             />
             <button className="icon-btn search-btn" onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) { setTimeout(() => document.getElementById('searchInput')?.focus(), 120); } }} aria-label="Toggle search input">
               <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', stroke: 'currentColor', fill: 'none', strokeWidth: 2 }}>
-                <circle cx="11" cy="11" r="7"/>
-                <path d="M21 21l-4.3-4.3"/>
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.3-4.3" />
               </svg>
             </button>
 
@@ -1742,7 +1232,7 @@ export default function Storefront() {
                 WebkitBackdropFilter: 'blur(12px)',
                 textAlign: 'left'
               }} className="search-popover">
-                
+
                 {/* RECENT SEARCHES */}
                 {searchHistory.length > 0 && !searchQuery && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1774,7 +1264,7 @@ export default function Storefront() {
 
                 {/* SUGGESTED / AUTOCOMPLETE PRODUCTS */}
                 {(() => {
-                  const filtered = searchQuery 
+                  const filtered = searchQuery
                     ? productsList.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.cat.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 4)
                     : productsList.slice(0, 3); // Featured items if no search term
 
@@ -1792,7 +1282,6 @@ export default function Storefront() {
                                 addToSearchHistory(searchQuery || item.name);
                                 setDetailProduct(item);
                                 setDetailSize(item.cat === 'headwear' ? 'OS' : 'M');
-                                setDetailOpenedFromWishlist(false);
                                 setSearchOpen(false);
                               }}
                               style={{
@@ -1830,11 +1319,11 @@ export default function Storefront() {
           </div>
 
           <button className="icon-btn auth-btn" onClick={() => { setAuthMode(user ? 'profile' : 'login'); setAuthOpen(true); }} aria-label="Account">
-            <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
             <span>{user ? user.name.split(' ')[0] : 'Login'}</span>
           </button>
 
-          <button className="icon-btn wishlist-btn" onClick={() => { setCartOpen(false); setAuthOpen(false); setAdminOpen(false); setTrackingOpen(false); setDetailProduct(null); setWishlistOpen(true); }} aria-label="Open wishlist" style={{ position: 'relative' }}>
+          <button className="icon-btn wishlist-btn" onClick={() => setWishlistOpen(true)} aria-label="Open wishlist" style={{ position: 'relative' }}>
             <svg viewBox="0 0 24 24" style={{ width: '18px', height: '18px', fill: wishlistItems.length > 0 ? 'var(--red)' : 'none', stroke: wishlistItems.length > 0 ? 'var(--red)' : 'currentColor', strokeWidth: 2 }}>
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
@@ -1842,7 +1331,7 @@ export default function Storefront() {
           </button>
 
           <button className="icon-btn cart-btn" onClick={() => { setCheckoutStep('cart'); setCartOpen(true); }} aria-label="Open cart">
-            <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7L6 7z" /><path d="M9 7a3 3 0 0 1 6 0" /></svg>
             Cart<span className={`cart-count ${cartQty > 0 ? 'show' : ''}`}>{cartQty}</span>
           </button>
         </div>
@@ -1853,27 +1342,27 @@ export default function Storefront() {
         <div className="hero-glow"></div>
         <img className="hero-mark" src="data:image/png;base64,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" alt="" aria-hidden="true" />
         <canvas id="embers" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}></canvas>
-        
+
         <div className="hero-inner">
           <div className="hero-eyebrow">
-            <svg className="mark-ico" viewBox="0 0 100 140" aria-hidden="true"><use href="#rune"/></svg>
+            <svg className="mark-ico" viewBox="0 0 100 140" aria-hidden="true"><use href="#rune" /></svg>
             <b>Drop 001</b> &middot; Heavyweight Streetwear<span className="est"> &middot; Est. 2026</span>
           </div>
-          
+
           <h1 id="heroTitle">
             <span className="row" data-text="Wear">{splitWord("Wear", 0)}</span>
             <span className="row outline" data-text="The">{splitWord("The", 1)}</span>
             <span className="row red" data-text="Mark.">{splitWord("Mark.", 2)}</span>
           </h1>
-          
+
           <p className="hero-sub">240 GSM blanks. Oversized cuts. Black as the base, <em>one red line</em> running through everything we make.</p>
-          
+
           <div className="hero-ctas">
             <a className="btn btn-red" onClick={() => document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' })} role="button" tabIndex={0}>
               Shop Drop 001<span className="arr">&rarr;</span>
             </a>
           </div>
-          
+
           <div className="hero-meta" aria-hidden="true">
             <span><i className="dot"></i>240+ GSM heavyweight</span>
             <span className="sep"></span>
@@ -1893,46 +1382,31 @@ export default function Storefront() {
         <div className="sec-head reveal in">
           <div>
             <div className="eyebrow">Drop 001 / The Collection</div>
-            <h2>Six Pieces.<br/><span className="red">Zero Restocks.</span></h2>
+            <h2>Six Pieces.<br /><span className="red">Zero Restocks.</span></h2>
           </div>
           <p>Every piece carries the mark. Hover any garment to see it spin, pick a size, and add it to your cart.</p>
         </div>
 
         {/* CATEGORY TABS */}
         <div className="cats reveal in" id="cats">
-          {(['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear'] as const).map(cat => {
-            const label = cat === 'all' ? 'All' : cat.charAt(0).toUpperCase() + cat.slice(1);
+          {['all', 'hoodies', 'tees', 'outerwear', 'bottoms', 'headwear'].map(cat => {
+            const count = cat === 'all' ? productsList.length : productsList.filter(p => p.cat === cat).length;
+            const label = cat.charAt(0).toUpperCase() + cat.slice(1);
             return (
               <button key={cat} className={`cat ${activeCat === cat ? 'on' : ''}`} onClick={() => setActiveCat(cat)}>
-                {label}
+                {label}<sup>{count}</sup>
               </button>
             );
           })}
-
-          {/* Limited tab — keeps count badge */}
-          <button
-            className={`cat ${activeCat === 'limited' ? 'on' : ''}`}
-            onClick={() => setActiveCat('limited')}
-          >
-            Limited{limitedCount > 0 && <sup>{limitedCount}</sup>}
-          </button>
-
-          {/* Customize tab — no badge */}
-          <button
-            className={`cat ${activeCat === 'customize' ? 'on' : ''}`}
-            onClick={() => setActiveCat('customize')}
-          >
-            Customize
-          </button>
         </div>
 
         {/* PRODUCTS GRID */}
         <div className="grid" id="grid">
           {filteredProducts.map(p => {
-            const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL'];
+            const sizes = p.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL'];
             return (
               <article key={p.id} className="card reveal in" data-cat={p.cat} data-pid={p.id}>
-                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); setDetailOpenedFromWishlist(false); }}>
+                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
                   <span className="tag">001 / {p.id}</span>
                   <span className="cat-tag">{p.catLabel}</span>
                   <div className="fig">
@@ -1943,7 +1417,7 @@ export default function Storefront() {
                   </div>
                 </div>
                 <div className="card-body">
-                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); setDetailOpenedFromWishlist(false); }}>
+                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
                     <div className="meta">
                       <h3>{p.name}</h3>
                       <div className="desc">{p.desc}</div>
@@ -1961,7 +1435,7 @@ export default function Storefront() {
                     })}
                   </div>
                   <button className="add" type="button" onClick={() => addToCart(p, cardSizes[p.id] || (p.cat === 'headwear' ? 'OS' : 'M'))}>
-                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add to Cart
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Add to Cart
                   </button>
                 </div>
               </article>
@@ -1972,145 +1446,6 @@ export default function Storefront() {
               Nothing here yet. The archive stays closed.
             </div>
           )}
-
-          {/* NEXT DROP teaser card — only in Limited view, never counted in badge */}
-          {(activeCat === 'limited' || activeCat === 'all') && (
-            <article
-              className="card reveal in"
-              data-cat="limited-teaser"
-              style={{ cursor: 'pointer', opacity: 1 }}
-              onClick={() => window.location.href = '/limited-drops'}
-            >
-              <div className="card-media" style={{ position: 'relative' }}>
-                <span className="tag" style={{ opacity: 0.4 }}>??? / —</span>
-                <span className="cat-tag" style={{ opacity: 0.5 }}>Limited</span>
-                <div className="fig">
-                  <div className="shadow" style={{ opacity: 0.3 }} />
-                  <div className="lift">
-                    {/* Dimmed lock / question mark placeholder in place of real SVG */}
-                    <div className="spin" style={{ opacity: 0.18, filter: 'blur(0.5px)' }}>
-                      <svg viewBox="0 0 200 220" style={{ width: '100%', height: '100%' }}>
-                        {/* Ghosted hoodie silhouette */}
-                        <path d="M62 52 Q58 30 78 22 Q100 12 122 22 Q142 30 138 52 L162 62 Q176 68 178 84 L186 150 Q187 160 177 162 L156 166 Q149 167 148 158 L144 120 L144 196 Q144 206 134 206 L66 206 Q56 206 56 196 L56 120 L52 158 Q51 167 44 166 L23 162 Q13 160 14 150 L22 84 Q24 68 38 62 Z" fill="#17171a" stroke="#2c2c31" strokeWidth="2"/>
-                        {/* Lock icon centered */}
-                        <rect x="83" y="108" width="34" height="28" rx="5" fill="none" stroke="#e10600" strokeWidth="2.5"/>
-                        <path d="M90 108 Q90 92 100 92 Q110 92 110 108" fill="none" stroke="#e10600" strokeWidth="2.5" strokeLinecap="round"/>
-                        <circle cx="100" cy="122" r="3.5" fill="#e10600"/>
-                        <line x1="100" y1="125" x2="100" y2="130" stroke="#e10600" strokeWidth="2" strokeLinecap="round"/>
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-                {/* Overlay pulsing label */}
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', gap: '10px', pointerEvents: 'none'
-                }}>
-                  <div style={{
-                    fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.22em',
-                    color: 'var(--red)', textTransform: 'uppercase',
-                    animation: 'pulse 2.4s ease-in-out infinite',
-                    padding: '6px 14px', border: '1px solid rgba(225,6,0,0.35)',
-                    borderRadius: '4px', background: 'rgba(225,6,0,0.06)',
-                  }}>
-                    NEXT DROP
-                  </div>
-                  <div style={{ fontFamily: 'var(--serif)', fontSize: '0.55rem', color: 'var(--dim)', letterSpacing: '0.12em', fontStyle: 'italic' }}>
-                    tap to join the waitlist
-                  </div>
-                </div>
-              </div>
-
-              <div className="card-body">
-                <div className="top" style={{ pointerEvents: 'none' }}>
-                  <div className="meta">
-                    <h3 style={{ color: 'var(--dim)', letterSpacing: '0.12em' }}>More Coming</h3>
-                    <div className="desc" style={{ color: 'var(--dim2)' }}>Limited archive expanding. Notify me.</div>
-                  </div>
-                  {/* No price */}
-                </div>
-                {/* No sizes or add-to-cart */}
-                <div style={{
-                  marginTop: '14px', padding: '10px 0',
-                  borderTop: '1px solid var(--hair2)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  color: 'var(--red)', fontFamily: 'var(--disp)', fontSize: '0.6rem',
-                  letterSpacing: '0.16em', textTransform: 'uppercase',
-                }}>
-                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                  View Limited Drops
-                </div>
-              </div>
-            </article>
-          )}
-
-          {/* CUSTOMIZE teaser card — only in Customize view */}
-          {(activeCat === 'customize' || activeCat === 'all') && (
-            <article
-              className="card reveal in"
-              data-cat="customize-teaser"
-              style={{ cursor: 'pointer', opacity: 1 }}
-              onClick={() => fly('Customization is launching soon — stay tuned!')}
-            >
-              <div className="card-media" style={{ position: 'relative' }}>
-                <span className="tag" style={{ opacity: 0.4 }}>DIY / —</span>
-                <span className="cat-tag" style={{ opacity: 0.5 }}>Custom</span>
-                <div className="fig">
-                  <div className="shadow" style={{ opacity: 0.3 }} />
-                  <div className="lift">
-                    {/* Outline/sketch style garment placeholder with plus symbol */}
-                    <div className="spin" style={{ opacity: 0.25 }}>
-                      <svg viewBox="0 0 200 220" style={{ width: '100%', height: '100%' }}>
-                        {/* Outline hoodie silhouette */}
-                        <path d="M62 52 Q58 30 78 22 Q100 12 122 22 Q142 30 138 52 L162 62 Q176 68 178 84 L186 150 Q187 160 177 162 L156 166 Q149 167 148 158 L144 120 L144 196 Q144 206 134 206 L66 206 Q56 206 56 196 L56 120 L52 158 Q51 167 44 166 L23 162 Q13 160 14 150 L22 84 Q24 68 38 62 Z" fill="none" stroke="#2c2c31" strokeWidth="2" strokeDasharray="4 4"/>
-                        {/* Large Plus icon centered */}
-                        <circle cx="100" cy="110" r="28" fill="none" stroke="#e10600" strokeWidth="2"/>
-                        <line x1="88" y1="110" x2="112" y2="110" stroke="#e10600" strokeWidth="3" strokeLinecap="round"/>
-                        <line x1="100" y1="98" x2="100" y2="122" stroke="#e10600" strokeWidth="3" strokeLinecap="round"/>
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-                {/* Overlay pulsing label */}
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', gap: '10px', pointerEvents: 'none'
-                }}>
-                  <div style={{
-                    fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.22em',
-                    color: 'var(--red)', textTransform: 'uppercase',
-                    animation: 'pulse 2.4s ease-in-out infinite',
-                    padding: '6px 14px', border: '1px solid rgba(225,6,0,0.35)',
-                    borderRadius: '4px', background: 'rgba(225,6,0,0.06)',
-                  }}>
-                    BUILD YOUR OWN
-                  </div>
-                  <div style={{ fontFamily: 'var(--serif)', fontSize: '0.55rem', color: 'var(--dim)', letterSpacing: '0.12em', fontStyle: 'italic' }}>
-                    create custom piece
-                  </div>
-                </div>
-              </div>
-
-              <div className="card-body">
-                <div className="top" style={{ pointerEvents: 'none' }}>
-                  <div className="meta">
-                    <h3 style={{ color: 'var(--dim)', letterSpacing: '0.12em' }}>Interactive Builder</h3>
-                    <div className="desc" style={{ color: 'var(--dim2)' }}>Customize garments with color swatches & custom text.</div>
-                  </div>
-                </div>
-                <div style={{
-                  marginTop: '14px', padding: '10px 0',
-                  borderTop: '1px solid var(--hair2)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  color: 'var(--red)', fontFamily: 'var(--disp)', fontSize: '0.6rem',
-                  letterSpacing: '0.16em', textTransform: 'uppercase',
-                }}>
-                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-                  Open Customizer
-                </div>
-              </div>
-            </article>
-          )}
         </div>
       </section>
 
@@ -2118,7 +1453,7 @@ export default function Storefront() {
       <section id="story" data-thread="right" style={{ position: 'relative', zIndex: 2 }}>
         <div className="story-head">
           <div className="eyebrow reveal in">The Mark</div>
-          <h2 className="reveal in">Born cursed.<br/><em>Worn proud.</em></h2>
+          <h2 className="reveal in">Born cursed.<br /><em>Worn proud.</em></h2>
         </div>
         <div className="story-wrap">
           <blockquote className="pull reveal in">Aura isn&apos;t given. It&apos;s farmed. <b>Rep by rep, night by night, stitch by stitch.</b> The red line is the path. Walk it.</blockquote>
@@ -2158,16 +1493,16 @@ export default function Storefront() {
         <div className="foot-grid">
           <div className="foot-brand-col">
             <a className="foot-logo" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} role="button" tabIndex={0} aria-label="Aura Farming home">
-              <svg viewBox="0 0 100 140" aria-hidden="true"><use href="#rune"/></svg>
+              <svg viewBox="0 0 100 140" aria-hidden="true"><use href="#rune" /></svg>
               <span>Aura Farming</span>
             </a>
             <p className="foot-tag">Heavyweight streetwear forged in black and red. One line runs through everything.</p>
             <div className="foot-actions">
               <button className="foot-ig" type="button" aria-label="Instagram" onClick={() => fly('Instagram coming with Drop 001')}>
-                <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2m0 1.8c-3.1 0-3.5 0-4.8.1-1.1.1-1.5.2-1.9.3-.5.2-.8.4-1.1.7-.3.3-.6.6-.7 1.1-.1.4-.3.8-.3 1.9-.1 1.2-.1 1.6-.1 4.8s0 3.5.1 4.8c.1 1.1.2 1.5.3 1.9.2.5.4.8.7 1.1.3.3.6.6 1.1.7.4.1.8.3 1.9.3 1.2.1 1.6.1 4.8.1s3.5 0 4.8-.1c1.1-.1 1.5-.2 1.9-.3.5-.2.8-.4 1.1-.7.3-.3.6-.6.7-1.1.1-.4.3-.8.3-1.9.1-1.2.1-1.6.1-4.8s0-3.5-.1-4.8c-.1-1.1-.2-1.5-.3-1.9-.2-.5-.4-.8-.7-1.1-.3-.3-.6-.6-1.1-.7-.4-.1-.8-.3-1.9-.3-1.2-.1-1.6-.1-4.8-.1zm0 3.1a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zm0 8.1a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zm6.2-8.3a1.1 1.1 0 1 1-2.3 0 1.1 1.1 0 0 1 2.3 0z"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2m0 1.8c-3.1 0-3.5 0-4.8.1-1.1.1-1.5.2-1.9.3-.5.2-.8.4-1.1.7-.3.3-.6.6-.7 1.1-.1.4-.3.8-.3 1.9-.1 1.2-.1 1.6-.1 4.8s0 3.5.1 4.8c.1 1.1.2 1.5.3 1.9.2.5.4.8.7 1.1.3.3.6.6 1.1.7.4.1.8.3 1.9.3 1.2.1 1.6.1 4.8.1s3.5 0 4.8-.1c1.1-.1 1.5-.2 1.9-.3.5-.2.8-.4 1.1-.7.3-.3.6-.6.7-1.1.1-.4.3-.8.3-1.9.1-1.2.1-1.6.1-4.8s0-3.5-.1-4.8c-.1-1.1-.2-1.5-.3-1.9-.2-.5-.4-.8-.7-1.1-.3-.3-.6-.6-1.1-.7-.4-.1-.8-.3-1.9-.3-1.2-.1-1.6-.1-4.8-.1zm0 3.1a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zm0 8.1a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zm6.2-8.3a1.1 1.1 0 1 1-2.3 0 1.1 1.1 0 0 1 2.3 0z" /></svg>
               </button>
               <button className="foot-chip" type="button" onClick={() => setTrackingOpen(true)}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11l2 4h5M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11l2 4h5M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" /></svg>
                 Track Order
               </button>
             </div>
@@ -2179,13 +1514,13 @@ export default function Storefront() {
               <svg className="map-grid" viewBox="0 0 220 120" aria-hidden="true">
                 <defs>
                   <linearGradient id="mapFade" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="rgba(236,232,225,.10)"/>
-                    <stop offset="1" stopColor="rgba(236,232,225,.02)"/>
+                    <stop offset="0" stopColor="rgba(236,232,225,.10)" />
+                    <stop offset="1" stopColor="rgba(236,232,225,.02)" />
                   </linearGradient>
                 </defs>
-                <path className="mroad" d="M0 30 H220 M0 64 H220 M0 96 H220 M40 0 V120 M96 0 V120 M150 0 V120 M196 0 V120"/>
-                <path className="mroad diag" d="M0 120 L120 0 M80 120 L220 20"/>
-                <circle className="mblip" cx="110" cy="64" r="3"/>
+                <path className="mroad" d="M0 30 H220 M0 64 H220 M0 96 H220 M40 0 V120 M96 0 V120 M150 0 V120 M196 0 V120" />
+                <path className="mroad diag" d="M0 120 L120 0 M80 120 L220 20" />
+                <circle className="mblip" cx="110" cy="64" r="3" />
               </svg>
               <span className="map-pin"><i></i></span>
               <span className="map-note">Preview</span>
@@ -2221,13 +1556,11 @@ export default function Storefront() {
             </div>
             <div className="cart-items" style={{ padding: '20px 24px' }}>
               {cart.map((c, idx) => (
-                <div className="citem" key={`${c.pid}-${c.size}-${c.color || ''}-${c.customText || ''}`}>
+                <div className="citem" key={`${c.pid}-${c.size}`}>
                   <div className="citem-fig" dangerouslySetInnerHTML={{ __html: SVGS[c.art] }}></div>
                   <div className="citem-info">
                     <h4>{c.name}</h4>
                     <div className="sz">Size {c.size}</div>
-                    {c.color && <div style={{ fontSize: '0.7rem', color: 'var(--red)', marginTop: '2px' }}>Color: {c.color}</div>}
-                    {c.customText && <div style={{ fontSize: '0.7rem', color: 'var(--bone)', fontStyle: 'italic', marginTop: '1px' }}>&ldquo;{c.customText}&rdquo;</div>}
                     <button className="rm" onClick={() => handleRemoveItem(idx)}>Remove</button>
                   </div>
                   <div className="citem-right">
@@ -2243,7 +1576,7 @@ export default function Storefront() {
               {cart.length === 0 && (
                 <div className="cart-empty">
                   <svg viewBox="0 0 24 24" style={{ width: '48px', height: '48px', stroke: 'var(--dim2)', fill: 'none', margin: '0 auto 10px' }}>
-                    <path d="M6 7h12l-1 13H7L6 7z"/><path d="M9 7a3 3 0 0 1 6 0"/>
+                    <path d="M6 7h12l-1 13H7L6 7z" /><path d="M9 7a3 3 0 0 1 6 0" />
                   </svg>
                   <p>Your cart is empty</p>
                   <small>The mark is waiting. Add a piece to begin.</small>
@@ -2251,519 +1584,85 @@ export default function Storefront() {
               )}
             </div>
             <div className="cart-foot">
-              {cart.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
-                  {([
-                    { label: 'Bag Total',       value: `₹${cartSubtotal.toLocaleString('en-IN')}`,   dim: false },
-                    { label: 'Bag Discount',    value: '₹0',                                          dim: true  },
-                    { label: 'Convenience Fee', value: `₹${CONVENIENCE_FEE}`,                         dim: true  },
-                    { label: 'Delivery Fee',    value: isCODSelected ? `₹${DELIVERY_FEE_COD}` : null, deliveryFree: !isCODSelected, dim: true },
-                    { label: 'Platform Fee',    value: `₹${PLATFORM_FEE}`,                            dim: true  },
-                    ...(isCODSelected ? [{ label: 'Cash on Delivery Fee', value: `₹${COD_FEE_CHARGE}`, dim: true }] : []),
-                  ] as Array<{ label: string; value: string | null; dim: boolean; deliveryFree?: boolean }>).map((row) => (
-                    <div key={row.label} className="cart-row" style={{ fontSize: '0.75rem', color: row.dim ? 'var(--dim)' : 'var(--bone)' }}>
-                      <span>{row.label}</span>
-                      {row.deliveryFree ? (
-                        <span style={{ color: 'var(--dim)' }}>
-                          <s style={{ marginRight: '4px', opacity: 0.5 }}>₹49</s>
-                          <span style={{ color: '#4caf78', fontWeight: 600 }}>FREE</span>
-                        </span>
-                      ) : (
-                        <span style={{ color: row.label === 'Bag Discount' ? '#4caf78' : 'inherit' }}>{row.value}</span>
-                      )}
-                    </div>
-                  ))}
-                  <div style={{ height: '1px', background: 'var(--hair2)', margin: '4px 0' }} />
-                </div>
-              )}
-              <div className="cart-row total"><span>Order Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b></div>
-              <button className="checkout" disabled={cart.length === 0} onClick={async () => {
+              <div className="cart-row"><span>Subtotal</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
+              <div className="cart-row"><span>Shipping</span><span>{cartShippingFee === 0 ? 'Free' : `₹${cartShippingFee}`}</span></div>
+              <div className="cart-row total"><span>Total</span><b>₹{cartTotal.toLocaleString('en-IN')}</b></div>
+              <button className="checkout" disabled={cart.length === 0} onClick={() => {
                 if (!user) {
                   setCartOpen(false);
                   setAuthMode('login');
                   setAuthOpen(true);
                   fly('Please login or register to complete your checkout');
                 } else {
-                  await fetchAddresses();
+                  setCheckoutName(user.name);
+                  setCheckoutAddress((user as any).shippingAddress || '');
                   setCheckoutStep('shipping');
                 }
               }}>
                 Checkout<span className="arr">&rarr;</span>
               </button>
-              <div className="cart-note">Prepaid (Card/UPI): Free shipping · COD: ₹199 handling fee</div>
+              <div className="cart-note">Secure checkout &middot; Free shipping over ₹4,999</div>
             </div>
           </>
         ) : checkoutStep === 'shipping' ? (
           <>
-            {addressMode === 'summary' && selectedAddress ? (
-              <>
-                <div className="cart-head">
-                  <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Delivery Address</h3>
-                  <button className="cart-close" onClick={() => setCheckoutStep('cart')}>&larr;</button>
-                </div>
-                <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px 24px', overflowY: 'auto' }}>
-                  <p style={{ color: 'var(--dim)', fontSize: '0.8rem', fontFamily: 'var(--serif)', fontStyle: 'italic', margin: 0 }}>
-                    We will deliver your order to this address:
-                  </p>
-
-                  <div style={{
-                    background: 'var(--ink)',
-                    border: '1px solid var(--red)',
-                    boxShadow: '0 0 10px rgba(225,6,0,0.15)',
-                    borderRadius: '16px',
-                    padding: '20px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.85rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                        {selectedAddress.name}
-                      </span>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <span style={{
-                          fontSize: '0.55rem', color: '#fff', background: 'var(--coal)', border: '1px solid var(--hair2)',
-                          padding: '3px 8px', borderRadius: '4px', fontFamily: 'var(--disp)', letterSpacing: '0.1em', textTransform: 'uppercase'
-                        }}>
-                          {selectedAddress.addressType}
-                        </span>
-                        {selectedAddress.isDefault && (
-                          <span style={{
-                            fontSize: '0.55rem', color: 'var(--red)', background: 'rgba(225,6,0,0.1)', border: '1px solid var(--red)',
-                            padding: '3px 8px', borderRadius: '4px', fontFamily: 'var(--disp)', letterSpacing: '0.1em', textTransform: 'uppercase'
-                          }}>
-                            Default
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ color: 'var(--dim)', fontSize: '0.8rem', lineHeight: 1.4, fontFamily: 'var(--body)' }}>
-                      {selectedAddress.flatNumber},<br />
-                      {selectedAddress.locality}, {selectedAddress.landmark},<br />
-                      {selectedAddress.city}, {selectedAddress.state} - {selectedAddress.pinCode}<br />
-                      India
-                    </div>
-                    <div style={{ color: 'var(--bone)', fontSize: '0.78rem', borderTop: '1px solid var(--hair2)', paddingTop: '10px', marginTop: '4px', fontFamily: 'var(--body)' }}>
-                      Phone: <span style={{ color: 'var(--red)', fontFamily: 'monospace' }}>+91 {selectedAddress.mobile}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setAddressMode('list')}
-                    style={{
-                      background: 'none', border: '1px solid var(--hair2)', borderRadius: '12px',
-                      color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.7rem',
-                      letterSpacing: '0.12em', textTransform: 'uppercase', padding: '14px 16px',
-                      cursor: 'pointer', textAlign: 'center', width: '100%', transition: 'all 0.2s'
-                    }}
-                  >
-                    Change Address
-                  </button>
-                </div>
-
-                <div className="cart-foot" style={{ background: 'var(--coal2)', padding: '20px 24px' }}>
-                  <button className="checkout" type="button" onClick={() => setCheckoutStep('payment-method')}>
-                    Deliver to this Address<span className="arr">&rarr;</span>
-                  </button>
-                </div>
-              </>
-            ) : addressMode === 'list' ? (
-              <>
-                <div className="cart-head">
-                  <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Change Address</h3>
-                  <button className="cart-close" onClick={() => {
-                    if (savedAddresses.length > 0) setAddressMode('summary');
-                    else setCheckoutStep('cart');
-                  }}>&larr;</button>
-                </div>
-                <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '20px 24px', overflowY: 'auto' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleShippingReset();
-                      setAddressMode('add');
-                    }}
-                    style={{
-                      background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--hair2)', borderRadius: '12px',
-                      color: 'var(--red)', fontFamily: 'var(--disp)', fontSize: '0.72rem',
-                      letterSpacing: '0.12em', textTransform: 'uppercase', padding: '14px 16px',
-                      cursor: 'pointer', textAlign: 'center', width: '100%', transition: 'all 0.2s'
-                    }}
-                  >
-                    + Add New Address
-                  </button>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {savedAddresses.map(addr => {
-                      const isSelected = selectedAddress?.id === addr.id;
-                      return (
-                        <div
-                          key={addr.id}
-                          onClick={() => selectActiveAddress(addr)}
-                          style={{
-                            background: isSelected ? 'rgba(225,6,0,0.02)' : 'var(--ink)',
-                            border: isSelected ? '1px solid var(--red)' : '1px solid var(--hair2)',
-                            boxShadow: isSelected ? '0 0 8px rgba(225,6,0,0.1)' : 'none',
-                            borderRadius: '12px',
-                            padding: '14px 16px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.78rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                              {addr.name}
-                            </span>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{
-                                fontSize: '0.5rem', color: 'var(--dim)', background: 'var(--coal)', border: '1px solid var(--hair)',
-                                padding: '2px 6px', borderRadius: '4px', fontFamily: 'var(--disp)', letterSpacing: '0.08em', textTransform: 'uppercase'
-                              }}>
-                                {addr.addressType}
-                              </span>
-                              {addr.isDefault && (
-                                <span style={{
-                                  fontSize: '0.5rem', color: 'var(--red)', background: 'rgba(225,6,0,0.08)', border: '1px solid var(--red)',
-                                  padding: '2px 6px', borderRadius: '4px', fontFamily: 'var(--disp)', letterSpacing: '0.08em', textTransform: 'uppercase'
-                                }}>
-                                  Default
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div style={{ color: 'var(--dim)', fontSize: '0.75rem', lineHeight: 1.35, fontFamily: 'var(--body)' }}>
-                            {addr.flatNumber}, {addr.locality}, {addr.landmark}, {addr.city}, {addr.state} - {addr.pinCode}, India
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--dim2)', fontFamily: 'var(--body)' }}>
-                              Phone: <span style={{ color: 'var(--bone)', fontFamily: 'monospace' }}>+91 {addr.mobile}</span>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                startEditingAddress(addr);
-                              }}
-                              style={{
-                                background: 'none', border: 'none', color: 'var(--red)', textDecoration: 'underline',
-                                cursor: 'pointer', fontFamily: 'var(--disp)', fontSize: '0.62rem',
-                                letterSpacing: '0.12em', textTransform: 'uppercase', padding: '2px'
-                              }}
-                            >
-                              Edit
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="cart-head">
-                  <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>
-                    {addressMode === 'add' ? 'Add New Address' : 'Edit Address'}
-                  </h3>
-                  <button className="cart-close" onClick={() => {
-                    if (savedAddresses.length > 0) setAddressMode('list');
-                    else setCheckoutStep('cart');
-                  }}>&larr;</button>
-                </div>
-                <form
-                  onSubmit={handleCheckoutSubmit}
-                  noValidate
-                  className="cart-items"
-                  style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px 24px', overflowY: 'auto' }}
-                >
-                  <style>{`
-                    .addr-field { display:flex; flex-direction:column; gap:6px; width:100%; }
-                    .addr-field .notify-box { width:100%; max-width:100%; border-radius:12px; box-sizing:border-box; }
-                    .addr-field input, .addr-field select {
-                      width:100%; box-sizing:border-box;
-                      padding:10px 14px; background:transparent; border:none;
-                      color:var(--bone); font-family:var(--body); font-size:0.85rem; outline:none;
-                    }
-                    .addr-field .prefix-row { display:flex; align-items:center; }
-                    .addr-field .prefix-row .pfx { padding:10px 6px 10px 14px; color:var(--dim); font-size:0.85rem; white-space:nowrap; flex-shrink:0; }
-                    .addr-field .prefix-row input { padding:10px 14px 10px 0; }
-                    .addr-err { font-size:0.68rem; color:#ff6a5e; margin-top:2px; }
-                    .addr-caption { font-size:0.65rem; color:var(--dim2); font-style:italic; }
-                  `}</style>
-
-                  <p style={{ color: 'var(--dim)', fontSize: '0.8rem', fontFamily: 'var(--serif)', fontStyle: 'italic', margin: 0 }}>
-                    Enter address coordinates below:
-                  </p>
-
-                  {/* 1. Name */}
-                  <div className="addr-field">
-                    <label className="foot-label">Name *</label>
-                    <div className="notify-box">
-                      <input type="text" value={checkoutName} onChange={e => setCheckoutName(e.target.value)} placeholder="Full name" required />
-                    </div>
-                    {formErrors.name && <span className="addr-err">{formErrors.name}</span>}
-                  </div>
-
-                  {/* 2. Mobile */}
-                  <div className="addr-field">
-                    <label className="foot-label">Mobile *</label>
-                    <div className="notify-box prefix-row">
-                      <span className="pfx">+91</span>
-                      <input
-                        type="tel"
-                        value={checkoutMobile}
-                        onChange={e => { setCheckoutMobile(e.target.value); if (mobileError) setMobileError(''); }}
-                        onBlur={() => {
-                          if (checkoutMobile && !/^[0-9]{10}$/.test(checkoutMobile.trim()))
-                            setMobileError('Please enter a valid 10 digit mobile number.');
-                        }}
-                        placeholder="9876543210"
-                        maxLength={10}
-                        required
-                      />
-                    </div>
-                    {(mobileError || formErrors.mobile) && <span className="addr-err">{mobileError || formErrors.mobile}</span>}
-                  </div>
-
-                  {/* 3. WhatsApp */}
-                  <div className="addr-field">
-                    <label className="foot-label">WhatsApp Number (optional)</label>
-                    <div className="notify-box prefix-row">
-                      <span className="pfx">+91</span>
-                      <input
-                        type="tel"
-                        value={checkoutPhone}
-                        onChange={e => setCheckoutPhone(e.target.value)}
-                        placeholder="Same as mobile or different"
-                        maxLength={10}
-                      />
-                    </div>
-                    <span className="addr-caption">Leave blank to use Mobile for WhatsApp notifications.</span>
-                  </div>
-
-                  {/* 4. Pin Code */}
-                  <div className="addr-field">
-                    <label className="foot-label">Pin Code *</label>
-                    <div className="notify-box">
-                      <input type="text" inputMode="numeric" value={checkoutPin} onChange={e => setCheckoutPin(e.target.value.replace(/\D/g,''))} placeholder="400001" maxLength={6} required />
-                    </div>
-                    {formErrors.pin && <span className="addr-err">{formErrors.pin}</span>}
-                  </div>
-
-                  {/* 5. Flat / Building */}
-                  <div className="addr-field">
-                    <label className="foot-label">Flat No. / Building Name *</label>
-                    <div className="notify-box">
-                      <input type="text" value={checkoutFlat} onChange={e => setCheckoutFlat(e.target.value)} placeholder="B-204, Horizon Apartments" required />
-                    </div>
-                    {formErrors.flat && <span className="addr-err">{formErrors.flat}</span>}
-                  </div>
-
-                  {/* 6. Locality */}
-                  <div className="addr-field">
-                    <label className="foot-label">Locality / Area / Street *</label>
-                    <div className="notify-box">
-                      <input type="text" value={checkoutLocality} onChange={e => setCheckoutLocality(e.target.value)} placeholder="Bandra West" required />
-                    </div>
-                    {formErrors.locality && <span className="addr-err">{formErrors.locality}</span>}
-                  </div>
-
-                  {/* 7. Landmark */}
-                  <div className="addr-field">
-                    <label className="foot-label">Landmark *</label>
-                    <div className="notify-box">
-                      <input type="text" value={checkoutLandmark} onChange={e => setCheckoutLandmark(e.target.value)} placeholder="Near Linking Road" required />
-                    </div>
-                    {formErrors.landmark && <span className="addr-err">{formErrors.landmark}</span>}
-                  </div>
-
-                  {/* 8. City */}
-                  <div className="addr-field">
-                    <label className="foot-label">District / City *</label>
-                    <div className="notify-box">
-                      <input type="text" value={checkoutCity} onChange={e => setCheckoutCity(e.target.value)} placeholder="Mumbai" required />
-                    </div>
-                    {formErrors.city && <span className="addr-err">{formErrors.city}</span>}
-                  </div>
-
-                  {/* 9. State */}
-                  <div className="addr-field">
-                    <label className="foot-label">State *</label>
-                    <div className="notify-box">
-                      <select value={checkoutState} onChange={e => setCheckoutState(e.target.value)} required
-                        style={{ width:'100%', boxSizing:'border-box', padding:'10px 14px', background:'var(--ink)', border:'none', color: checkoutState ? 'var(--bone)' : 'var(--dim)', fontFamily:'var(--body)', fontSize:'0.85rem', outline:'none', appearance:'none', cursor:'pointer' }}>
-                        <option value="" disabled>Select state</option>
-                        {['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Andaman and Nicobar Islands','Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi','Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry'].map(s => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {formErrors.state && <span className="addr-err">{formErrors.state}</span>}
-                  </div>
-
-                  {/* 10. Address Type */}
-                  <div className="addr-field">
-                    <label className="foot-label">Address Type</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      {(['Home', 'Work', 'Others'] as const).map(type => (
-                        <button
-                          key={type} type="button"
-                          onClick={() => setCheckoutAddressType(type)}
-                          style={{
-                            flex: 1, padding: '8px 0', borderRadius: '8px', cursor: 'pointer',
-                            fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.1em', textTransform: 'uppercase',
-                            background: checkoutAddressType === type ? 'var(--red)' : 'var(--ink)',
-                            border: `1px solid ${checkoutAddressType === type ? 'var(--red)' : 'var(--hair2)'}`,
-                            color: checkoutAddressType === type ? '#fff' : 'var(--dim)',
-                            transition: 'all 0.18s'
-                          }}
-                        >{type}</button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Default switch */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
-                    <input
-                      type="checkbox"
-                      id="checkoutIsDefault"
-                      checked={checkoutIsDefault}
-                      onChange={e => setCheckoutIsDefault(e.target.checked)}
-                      style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--red)' }}
-                    />
-                    <label htmlFor="checkoutIsDefault" style={{ color: 'var(--bone)', fontSize: '0.78rem', cursor: 'pointer', userSelect: 'none', fontFamily: 'var(--body)' }}>
-                      Set as default address
-                    </label>
-                  </div>
-
-                  {/* Buttons */}
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                    <button className="checkout" type="submit" style={{ flex: 1 }}>Save Address</button>
-                    <button type="button" onClick={handleShippingReset}
-                      style={{ flex: '0 0 auto', padding: '0 18px', background: 'none', border: '1px solid var(--hair2)', borderRadius: '8px', color: 'var(--dim)', fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer' }}
-                    >Reset</button>
-                  </div>
-                </form>
-              </>
-            )}
-          </>
-        ) : checkoutStep === 'payment-method' ? (
-          <>
             <div className="cart-head">
-              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment Mode</h3>
-              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
+              <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Shipping</h3>
+              <button className="cart-close" onClick={() => setCheckoutStep('cart')}>&larr;</button>
             </div>
-            <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '20px 24px', overflowY: 'auto' }}>
-              <p style={{ color: 'var(--dim)', fontSize: '0.8rem', fontFamily: 'var(--serif)', fontStyle: 'italic', marginBottom: '6px' }}>
-                Select how you want to pay.
+            <form onSubmit={handleCheckoutSubmit} className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px 24px', overflowY: 'auto' }}>
+              <p style={{ color: 'var(--dim)', fontSize: '0.85rem', fontFamily: 'var(--serif)', fontStyle: 'italic' }}>
+                Confirm shipping coordinates for the transaction.
               </p>
 
-              {([
-                { id: 'card', label: 'Credit / Debit Card', icon: '💳', note: 'Free shipping · Instant confirmation', live: true },
-                { id: 'upi',  label: 'UPI',                  icon: '⚡', note: 'Free shipping · Instant confirmation', live: true },
-                { id: 'cod',  label: 'Cash on Delivery',     icon: '📦', note: '₹199 handling fee applies',            live: true },
-                { id: 'nb',   label: 'NetBanking',            icon: '🏦', note: 'Coming soon',                         live: false },
-                { id: 'wlt',  label: 'Wallet',               icon: '👛', note: 'Coming soon',                         live: false },
-                { id: 'emi',  label: 'EMI',                  icon: '📅', note: 'Coming soon',                         live: false },
-              ] as const).map(method => (
-                <button
-                  key={method.id}
-                  type="button"
-                  onClick={() => {
-                    if (!method.live) { fly('Coming soon — stay tuned!'); return; }
-                    handlePaymentMethodConfirm(method.id as 'card' | 'upi' | 'cod');
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '14px',
-                    background: method.live ? 'var(--ink)' : 'rgba(255,255,255,0.02)',
-                    border: method.live ? '1px solid var(--red)' : '1px solid var(--hair2)',
-                    borderRadius: '12px', padding: '14px 16px', cursor: 'pointer',
-                    textAlign: 'left', width: '100%', transition: 'all 0.2s',
-                    opacity: method.live ? 1 : 0.45,
-                  }}
-                >
-                  <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>{method.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: 'var(--bone)', fontFamily: 'var(--disp)', fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                      {method.label}
-                    </div>
-                    <div style={{ color: 'var(--dim)', fontSize: '0.7rem', marginTop: '2px', fontFamily: 'var(--body)' }}>
-                      {method.note}
-                    </div>
-                  </div>
-                  {!method.live
-                    ? <span style={{ fontSize: '0.6rem', color: 'var(--dim2)', fontFamily: 'var(--disp)', letterSpacing: '0.12em', border: '1px solid var(--hair2)', padding: '3px 8px', borderRadius: '4px' }}>SOON</span>
-                    : <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--red)" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                  }
-                </button>
-              ))}
-            </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="foot-label">Recipient Name</label>
+                <div className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
+                  <input type="text" value={checkoutName} onChange={(e) => setCheckoutName(e.target.value)} placeholder="Akash" required style={{ padding: '10px 14px' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="foot-label">Coordinates Address</label>
+                <textarea
+                  value={checkoutAddress}
+                  onChange={(e) => setCheckoutAddress(e.target.value)}
+                  placeholder="Enter your full shipping address..."
+                  required
+                  style={{ background: 'var(--ink)', border: '1px solid var(--hair2)', borderRadius: '12px', color: 'var(--bone)', padding: '12px', fontFamily: 'var(--body)', fontSize: '0.85rem', height: '80px', resize: 'none', outline: 'none' }}
+                />
+              </div>
+
+              <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Proceed to Payment</button>
+            </form>
           </>
         ) : (
           <>
             <div className="cart-head">
               <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Payment</h3>
-              <button className="cart-close" onClick={() => setCheckoutStep('payment-method')}>&larr;</button>
+              <button className="cart-close" onClick={() => setCheckoutStep('shipping')}>&larr;</button>
             </div>
             <div className="cart-items" style={{ padding: '20px 24px', overflowY: 'auto' }}>
-              {(() => {
-                const addressSummary = selectedAddress
-                  ? `${selectedAddress.name} · ${selectedAddress.city}`
-                  : checkoutName
-                    ? `${checkoutName} · ${checkoutAddress.split(',').slice(-3, -1).join(',').trim() || 'India'}`
-                    : 'Your address';
-                return (
-                  <>
-                    {selectedPaymentMethod === 'cod' ? (
-                      <CodPaymentScreen
-                        total={checkoutTotal}
-                        bagTotal={checkoutBagTotal}
-                        addressSummary={addressSummary}
-                        onBack={() => setCheckoutStep('payment-method')}
-                        onConfirm={() => {
-                          setCart([]);
-                          updateLocalStorage([]);
-                          setCheckoutStep('cart');
-                          setCartOpen(false);
-                          fly('Order placed! Cash on Delivery — pay ₹' + checkoutTotal.toLocaleString('en-IN') + ' upon arrival.');
-                          fetchOrders();
-                          setAuthMode('profile');
-                          setTimeout(() => setAuthOpen(true), 1200);
-                        }}
-                      />
-                    ) : (
-                      <>
-                        <OrderSummary bagTotal={checkoutBagTotal} isCOD={false} />
-                        <RazorpayPaymentForm
-                          total={checkoutTotal}
-                          shippingName={checkoutName}
-                          shippingAddress={addressSummary}
-                          phone={checkoutMobile}
-                          cartItems={cart}
-                          addressSummary={addressSummary}
-                          paymentMethod={selectedPaymentMethod as 'card' | 'upi'}
-                          onBack={() => setCheckoutStep('payment-method')}
-                          onSuccess={() => {
-                            setCart([]);
-                            updateLocalStorage([]);
-                            setCheckoutStep('cart');
-                            setCartOpen(false);
-                            fly('Payment received successfully. Order confirmed.');
-                            fetchOrders();
-                            setAuthMode('profile');
-                            setTimeout(() => setAuthOpen(true), 1200);
-                          }}
-                        />
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-
+              <Elements stripe={stripePromise} options={{ clientSecret }}>
+                <StripePaymentForm
+                  clientSecret={clientSecret}
+                  orderId={checkoutOrderId}
+                  total={checkoutTotal}
+                  shippingName={checkoutName}
+                  isMock={isMockPayment}
+                  onBack={() => setCheckoutStep('shipping')}
+                  onSuccess={() => {
+                    setCart([]);
+                    updateLocalStorage([]);
+                    setCheckoutStep('cart');
+                    setCartOpen(false);
+                    fly('Payment received successfully. Order initialized.');
+                    fetchOrders();
+                    setAuthMode('profile');
+                    setTimeout(() => setAuthOpen(true), 1200);
+                  }}
+                />
+              </Elements>
             </div>
           </>
         )}
@@ -2814,27 +1713,6 @@ export default function Storefront() {
               </div>
             </div>
             <button className="checkout" type="submit" style={{ marginTop: '10px' }}>Authorize Session</button>
-            {unverifiedEmail && (
-              <div style={{
-                background: 'rgba(225,6,0,0.06)', border: '1px solid rgba(225,6,0,0.3)',
-                padding: '10px 14px', borderRadius: '8px', textAlign: 'center', fontSize: '0.75rem',
-                color: 'var(--bone)', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px'
-              }}>
-                <span>Account is not verified yet.</span>
-                <button
-                  type="button"
-                  onClick={handleResendVerification}
-                  disabled={resendingVerification}
-                  style={{
-                    background: 'none', border: 'none', color: 'var(--red)', textDecoration: 'underline',
-                    cursor: 'pointer', fontFamily: 'var(--disp)', fontSize: '0.65rem', letterSpacing: '0.12em',
-                    textTransform: 'uppercase', padding: '2px'
-                  }}
-                >
-                  {resendingVerification ? 'Resending...' : 'Resend Verification Email'}
-                </button>
-              </div>
-            )}
             <p style={{ fontSize: '0.75rem', color: 'var(--dim2)', textAlign: 'center' }}>
               New user?{' '}
               <a onClick={() => setAuthMode('register')} style={{ color: 'var(--bone)', textDecoration: 'underline', cursor: 'pointer' }}>
@@ -2952,50 +1830,19 @@ export default function Storefront() {
               <div style={{ marginTop: '10px', borderTop: '1px solid var(--hair2)', paddingTop: '20px' }}>
                 <h5 className="foot-label" style={{ marginBottom: '10px' }}>Marked Lineage (Orders)</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  {(() => {
-                    const sorted = [...userOrders].sort((a, b) => parseSqlDate(b.created_at).getTime() - parseSqlDate(a.created_at).getTime());
-                    const groups: { label: string; items: typeof userOrders }[] = [];
-                    const todayStr = new Date().toDateString();
-                    const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
-                    const yestStr = yestDate.toDateString();
-                    
-                    sorted.forEach(order => {
-                      const d = parseSqlDate(order.created_at);
-                      const dStr = d.toDateString();
-                      let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-                      if (dStr === todayStr) label = 'Today';
-                      else if (dStr === yestStr) label = 'Yesterday';
-                      
-                      let group = groups.find(g => g.label === label);
-                      if (!group) { group = { label, items: [] }; groups.push(group); }
-                      group.items.push(order);
-                    });
-                    
-                    if (groups.length === 0) return <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>;
-                    
-                    return groups.map(g => (
-                      <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
-                        {g.items.map(order => {
-                          const dateObj = parseSqlDate(order.created_at);
-                          const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                          return (
-                            <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
-                                <span style={{ color: 'var(--bone)' }}>{order.id}</span>
-                                <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
-                              </div>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--dim)', fontStyle: 'italic' }}>{timeStr}</div>
-                              <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
-                              <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
-                                Track Progress &rarr;
-                              </button>
-                            </div>
-                          );
-                        })}
+                  {userOrders.map(order => (
+                    <div key={order.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                        <span style={{ color: 'var(--bone)' }}>{order.id}</span>
+                        <span className={`tag ${order.status === 'paid' ? 'red' : ''}`} style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{order.status}</span>
                       </div>
-                    ));
-                  })()}
+                      <div style={{ fontSize: '0.7rem', color: 'var(--dim2)' }}>Total: ₹{order.total.toLocaleString('en-IN')}</div>
+                      <button className="icon-btn" onClick={() => { setTrackingOrderId(order.id); setTrackingOpen(true); setAuthOpen(false); }} style={{ fontSize: '0.62rem', color: 'var(--red)', alignSelf: 'flex-start', padding: 0, marginTop: '4px' }}>
+                        Track Progress &rarr;
+                      </button>
+                    </div>
+                  ))}
+                  {userOrders.length === 0 && <p style={{ fontStyle: 'italic', fontFamily: 'var(--serif)' }}>No marks retrieved yet.</p>}
                 </div>
               </div>
 
@@ -3025,7 +1872,7 @@ export default function Storefront() {
         {adminStats && (() => {
           const lowStockCount = adminStats.products.filter((p: any) => p.stock < 15).length;
           const aov = Math.round(adminStats.totalSales / (adminStats.totalOrders || 1));
-          
+
           // Calculate daily sales trend data
           const salesMap: Record<string, { count: number; total: number }> = {};
           const daysToTrend = 7;
@@ -3035,7 +1882,7 @@ export default function Storefront() {
             const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
             salesMap[label] = { count: 0, total: 0 };
           }
-          
+
           adminStats.orders.forEach((o: any) => {
             if (!o.created_at) return;
             const cleanStr = o.created_at.endsWith('Z') ? o.created_at : o.created_at + ' UTC';
@@ -3046,14 +1893,14 @@ export default function Storefront() {
               salesMap[label].total += o.total;
             }
           });
-          
+
           const trendData = Object.entries(salesMap).map(([date, data]) => ({
             date,
             total: data.total
           }));
 
           const maxTrendSales = Math.max(...trendData.map(t => t.total), 2000);
-          
+
           // SVG points calculation
           const svgW = 500;
           const svgH = 120;
@@ -3061,22 +1908,22 @@ export default function Storefront() {
           const paddingRight = 16;
           const chartW = svgW - paddingLeft - paddingRight;
           const chartH = svgH - 24;
-          
+
           const points = trendData.map((d, i) => {
             const x = paddingLeft + (i * chartW) / (daysToTrend - 1);
             const y = chartH - (d.total * (chartH - 12)) / maxTrendSales;
             return { x, y, val: d.total, date: d.date };
           });
-          
+
           const linePathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
           const areaPathD = points.length > 0 ? `${linePathD} L ${points[points.length - 1].x} ${chartH} L ${points[0].x} ${chartH} Z` : '';
-          
+
           const topProducts = (adminStats.salesByProduct || []).slice(0, 3);
           const maxTpQty = Math.max(...topProducts.map((p: any) => p.totalQty), 1);
 
           return (
             <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '24px', padding: '20px 24px', overflowY: 'auto' }}>
-              
+
               {/* Stat Widgets 2x2 Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div style={{ background: 'rgba(236,232,225,.03)', border: '1px solid var(--hair2)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -3108,7 +1955,7 @@ export default function Storefront() {
                         <stop offset="100%" stopColor="var(--red)" stopOpacity="0.0" />
                       </linearGradient>
                     </defs>
-                    
+
                     {/* Horizontal Scale Lines */}
                     {[0, 0.5, 1].map((ratio, gridIdx) => {
                       const gridY = chartH - ratio * (chartH - 12);
@@ -3120,10 +1967,10 @@ export default function Storefront() {
                         </g>
                       );
                     })}
-                    
+
                     {/* Area Fill */}
                     {areaPathD && <path d={areaPathD} fill="url(#chartLineGrad)" />}
-                    
+
                     {/* Glowing Stroke Path */}
                     {linePathD && (
                       <path
@@ -3136,7 +1983,7 @@ export default function Storefront() {
                         style={{ filter: 'drop-shadow(0 0 5px rgba(225,6,0,0.5))' }}
                       />
                     )}
-                    
+
                     {/* Data Circles & Tooltip Values */}
                     {points.map((p, i) => (
                       <g key={i}>
@@ -3202,56 +2049,16 @@ export default function Storefront() {
               <div>
                 <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Order Status Override</h5>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
-                  {(() => {
-                    const sorted = [...adminStats.orders].sort((a: any, b: any) => parseSqlDate(b.created_at || b.createdAt).getTime() - parseSqlDate(a.created_at || a.createdAt).getTime());
-                    const groups: { label: string; items: any[] }[] = [];
-                    const todayStr = new Date().toDateString();
-                    const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
-                    const yestStr = yestDate.toDateString();
-                    
-                    sorted.forEach((o: any) => {
-                      const d = parseSqlDate(o.created_at || o.createdAt);
-                      const dStr = d.toDateString();
-                      let label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-                      if (dStr === todayStr) label = 'Today';
-                      else if (dStr === yestStr) label = 'Yesterday';
-                      
-                      let group = groups.find(g => g.label === label);
-                      if (!group) { group = { label, items: [] }; groups.push(group); }
-                      group.items.push(o);
-                    });
-                    
-                    if (groups.length === 0) return null;
-                    
-                    return groups.map(g => (
-                      <div key={g.label} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bone)', marginTop: '4px', borderBottom: '1px solid var(--hair2)', paddingBottom: '4px' }}>{g.label}</div>
-                        {g.items.map((o: any) => {
-                          const dateObj = parseSqlDate(o.created_at || o.createdAt);
-                          const timeStr = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                          return (
-                            <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                <span style={{ color: 'var(--bone)' }}>{o.id}</span>
-                                <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
-                              </div>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--dim)', fontStyle: 'italic' }}>{timeStr}</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>
-                                Recipient: {o.shipping_name || o.shippingName} &middot; Total: ₹{o.total.toLocaleString('en-IN')} ({o.paymentMethod ? o.paymentMethod.toUpperCase() : (o.payment_method ? o.payment_method.toUpperCase() : 'CARD')})
-                              </div>
-                              {o.status === 'returned' && (o.refundAmount !== null || o.refund_amount !== null) && (
-                                <div style={{ fontSize: '0.7rem', color: 'var(--red)', fontWeight: 500 }}>
-                                  Refund: ₹{((o.refundAmount ?? o.refund_amount ?? Math.max(0, o.total - 40))).toLocaleString('en-IN')}
-                                  {((o.paymentMethod || o.payment_method) !== 'cod') ? ' (₹40 deduction)' : ' (COD no refund)'}
-                                </div>
-                              )}
-                              <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
-                            </div>
-                          );
-                        })}
+                  {adminStats.orders.map((o: any) => (
+                    <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                        <span style={{ color: 'var(--bone)' }}>{o.id}</span>
+                        <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
                       </div>
-                    ));
-                  })()}
+                      <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>Recipient: {o.shipping_name} &middot; Total: ₹{o.total.toLocaleString('en-IN')}</div>
+                      <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -3269,7 +2076,7 @@ export default function Storefront() {
           <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Track Order</h3>
           <button className="cart-close" onClick={() => { setTrackingOpen(false); setTrackingOrderData(null); }}>&times;</button>
         </div>
-        
+
         <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '30px 24px', overflowY: 'auto' }}>
           <form onSubmit={handleTrackingSearch} className="notify-box" style={{ maxWidth: '100%', borderRadius: '12px' }}>
             <input
@@ -3291,7 +2098,7 @@ export default function Storefront() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <button
                       type="button"
-                      onClick={() => handleTrackingSearch({ preventDefault: () => {} } as any)}
+                      onClick={() => handleTrackingSearch({ preventDefault: () => { } } as any)}
                       className="refresh-btn"
                       style={{
                         background: 'none',
@@ -3314,13 +2121,13 @@ export default function Storefront() {
                     </span>
                   </div>
                 </div>
-                
+
                 {/* Simulated Shipment Flow Steps */}
                 {(() => {
                   const statuses = ['paid', 'shipped', 'out_for_delivery', 'delivered'];
                   const currentIdx = statuses.indexOf(trackingOrderData.status);
                   const progressPercent = currentIdx === 0 ? 10 : currentIdx === 1 ? 40 : currentIdx === 2 ? 70 : 100;
-                  
+
                   const stepDetails = [
                     {
                       key: 'paid',
@@ -3416,7 +2223,7 @@ export default function Storefront() {
                         boxShadow: '0 0 12px var(--red)',
                         transition: 'height 0.8s cubic-bezier(0.4, 0, 0.2, 1)'
                       }} />
-                      
+
                       {stepDetails.map((step, idx) => {
                         const done = currentIdx >= idx;
                         const completedTime = getSimulatedStepTime(trackingOrderData.created_at, step.offset);
@@ -3444,7 +2251,7 @@ export default function Storefront() {
                             }}>
                               {step.icon}
                             </div>
-                            
+
                             {/* Details */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                               <span style={{
@@ -3489,53 +2296,7 @@ export default function Storefront() {
                   ))}
                 </div>
               </div>
-
-              {/* Order financial summary including refund details */}
-              <div style={{ background: 'rgba(236,232,225,0.02)', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  <span>Payment Method</span>
-                  <span style={{ textTransform: 'uppercase', color: 'var(--bone)', fontWeight: 600 }}>{trackingOrderData.paymentMethod || 'card'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  <span>Subtotal</span>
-                  <span style={{ color: 'var(--bone)' }}>₹{trackingOrderData.subtotal.toLocaleString('en-IN')}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--dim)' }}>
-                  <span>Shipping Fee</span>
-                  <span style={{ color: 'var(--bone)' }}>{trackingOrderData.shipping_fee === 0 ? 'Free' : `₹${trackingOrderData.shipping_fee}`}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--bone)', fontWeight: 600, borderTop: '1px solid var(--hair2)', paddingTop: '8px', marginTop: '4px' }}>
-                  <span>Total Paid</span>
-                  <span style={{ color: 'var(--red)' }}>₹{trackingOrderData.total.toLocaleString('en-IN')}</span>
-                </div>
-
-                {/* Refund display if marked returned */}
-                {trackingOrderData.status === 'returned' && (
-                  <div style={{
-                    marginTop: '10px', padding: '12px', background: 'rgba(225,6,0,0.06)',
-                    border: '1px solid rgba(225,6,0,0.3)', borderRadius: '8px',
-                    display: 'flex', flexDirection: 'column', gap: '4px'
-                  }}>
-                    <div style={{ color: 'var(--red)', fontSize: '0.75rem', fontFamily: 'var(--disp)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                      Refund Processed
-                    </div>
-                    <div style={{ color: 'var(--bone)', fontSize: '0.8rem', fontWeight: 600 }}>
-                      Refund Amount: ₹{(trackingOrderData.refundAmount ?? Math.max(0, trackingOrderData.total - 40)).toLocaleString('en-IN')}
-                    </div>
-                    {trackingOrderData.paymentMethod !== 'cod' ? (
-                      <div style={{ color: 'var(--dim)', fontSize: '0.7rem', fontStyle: 'italic', lineHeight: 1.3 }}>
-                        (₹{trackingOrderData.total.toLocaleString('en-IN')} paid &minus; ₹40 non-refundable handling fee)
-                      </div>
-                    ) : (
-                      <div style={{ color: 'var(--dim)', fontSize: '0.7rem', fontStyle: 'italic', lineHeight: 1.3 }}>
-                        (COD orders are not eligible for prepaid return refunds)
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
-
           ) : (
             <p style={{ color: 'var(--dim2)', fontSize: '0.8rem', fontStyle: 'italic', textAlign: 'center', marginTop: '20px' }}>
               Enter an order ID to view manifest routing details.
@@ -3550,29 +2311,29 @@ export default function Storefront() {
           <h3 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase' }}>Your Wishlist</h3>
           <button className="cart-close" onClick={() => setWishlistOpen(false)}>&times;</button>
         </div>
-        
+
         <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '30px 24px', overflowY: 'auto' }}>
           {wishlistItems.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {wishlistItems.map(item => (
                 <div key={item.id} style={{ display: 'flex', gap: '14px', background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '12px', padding: '12px 16px', alignItems: 'center' }}>
                   {/* Miniature Spin Garment SVG icon */}
-                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0, cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setDetailOpenedFromWishlist(true); setWishlistOpen(false); }}>
+                  <div style={{ width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--coal)', borderRadius: '8px', border: '1px solid var(--hair2)', flexShrink: 0 }}>
                     <div style={{ width: '36px', height: '36px', transform: 'scale(0.85)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
                   </div>
-                  
+
                   {/* Name and Price */}
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px', cursor: 'pointer' }} onClick={() => { setDetailProduct(item); setDetailSize(item.size || (item.cat === 'headwear' ? 'OS' : 'M')); setDetailOpenedFromWishlist(true); setWishlistOpen(false); }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '2px' }}>
                     <span style={{ fontSize: '0.8rem', color: 'var(--bone)', fontWeight: 500 }}>{item.name}</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')} {item.size && <span style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginLeft: '4px' }}>| Size: {item.size}</span>}</span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--dim)' }}>₹{item.price.toLocaleString('en-IN')}</span>
                   </div>
-                  
+
                   {/* Action Buttons (Add to Cart, Delete) */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                     <button
                       className="foot-chip"
                       onClick={() => {
-                        addToCart(item, item.size || (item.cat === 'headwear' ? 'OS' : 'M'));
+                        addToCart(item, 'M');
                       }}
                       style={{ height: '26px', padding: '0 10px', fontSize: '0.6rem' }}
                     >
@@ -3628,17 +2389,8 @@ export default function Storefront() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
                   <span className="foot-label">Select Size</span>
                   <div className="pdetail-sizes">
-                    {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL', 'XXL']).map(s => (
-                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => {
-                        setDetailSize(s);
-                        if (detailOpenedFromWishlist) {
-                          fetch('/api/wishlist', {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ productId: detailProduct.id, size: s })
-                          }).then(() => fetchWishlist());
-                        }
-                      }}>
+                    {(detailProduct.cat === 'headwear' ? ['OS'] : ['S', 'M', 'L', 'XL']).map(s => (
+                      <button key={s} className={`size ${s === detailSize ? 'sel' : ''}`} onClick={() => setDetailSize(s)}>
                         {s}
                       </button>
                     ))}
@@ -3650,7 +2402,7 @@ export default function Storefront() {
                   setCheckoutStep('cart');
                   setCartOpen(true);
                 }}>
-                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
                   Add to Cart
                 </button>
 
@@ -3671,7 +2423,7 @@ export default function Storefront() {
                 {/* SAVE TO WISHLIST BUTTON */}
                 <button
                   type="button"
-                  onClick={() => toggleWishlist(detailProduct.id, detailSize)}
+                  onClick={() => toggleWishlist(detailProduct.id)}
                   style={{
                     marginTop: '12px',
                     width: '100%',
@@ -3706,7 +2458,7 @@ export default function Storefront() {
 
       {/* TOAST ALERT */}
       <div id="toast" className={toastShow ? 'show' : ''}>
-        <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
         <span id="toastMsg">{toastMessage}</span>
       </div>
     </>
