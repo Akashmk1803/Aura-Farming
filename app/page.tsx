@@ -1773,7 +1773,7 @@ export default function Storefront() {
           <div className="foot-loc">
             <div className="foot-label">Location</div>
             <address className="foot-addr">Chandigarh, IN</address>
-            <button className="mini-map" id="miniMap" type="button" aria-label="Store location (preview)" onClick={() => fly('Map is a preview for now.')}>
+            <a href="https://maps.app.goo.gl/J8c7xd2WZahrPTgY9" target="_blank" rel="noopener noreferrer" className="mini-map" id="miniMap" aria-label="Store location">
               <svg className="map-grid" viewBox="0 0 220 120" aria-hidden="true">
                 <defs>
                   <linearGradient id="mapFade" x1="0" y1="0" x2="0" y2="1">
@@ -1786,8 +1786,8 @@ export default function Storefront() {
                 <circle className="mblip" cx="110" cy="64" r="3" />
               </svg>
               <span className="map-pin"><i></i></span>
-              <span className="map-note">Preview</span>
-            </button>
+              <span className="map-note">Store Location</span>
+            </a>
           </div>
         </div>
         <div className="foot-rule"></div>
