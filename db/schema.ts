@@ -12,6 +12,7 @@ export const products = sqliteTable('products', {
   stock: integer('stock').default(50).notNull(),
   isLimited: integer('is_limited', { mode: 'boolean' }).default(false).notNull(),
   isCustomizable: integer('is_customizable', { mode: 'boolean' }).default(false).notNull(),
+  mrp: integer('mrp').default(0).notNull(),
 });
 
 // Better Auth Tables
@@ -81,6 +82,8 @@ export const orders = sqliteTable('orders', {
   phone: text('phone').default('').notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   paymentGatewayOrderId: text('payment_gateway_order_id'),
+  couponCode: text('coupon_code'),
+  discountAmount: integer('discount_amount').default(0).notNull(),
 });
 
 export const orderItems = sqliteTable('order_items', {
@@ -117,3 +120,22 @@ export const addresses = sqliteTable('addresses', {
   isDefault: integer('is_default', { mode: 'boolean' }).default(false).notNull(),
 });
 
+export const coupons = sqliteTable('coupons', {
+  code: text('code').primaryKey(), // e.g. 'AURA10'
+  discountType: text('discount_type').$type<'percentage' | 'fixed'>().notNull(),
+  discountValue: integer('discount_value').notNull(),
+  minOrderValue: integer('min_order_value').default(0).notNull(),
+  maxDiscount: integer('max_discount'),
+  isActive: integer('is_active', { mode: 'boolean' }).default(true).notNull(),
+  isOneTime: integer('is_one_time', { mode: 'boolean' }).default(false).notNull(),
+  expiryDate: integer('expiry_date', { mode: 'timestamp' }),
+});
+
+export const couponUsages = sqliteTable('coupon_usages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  couponCode: text('coupon_code').notNull().references(() => coupons.code),
+  userId: text('user_id').notNull().references(() => user.id),
+  orderId: text('order_id').references(() => orders.id), // Can be null if it's just a welcome popup shown tracking
+  usedAt: integer('used_at', { mode: 'timestamp' }).notNull(),
+  isWelcomePopupShown: integer('is_welcome_popup_shown', { mode: 'boolean' }).default(false).notNull(),
+});

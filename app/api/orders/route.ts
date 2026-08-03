@@ -7,16 +7,7 @@ import { headers } from 'next/headers';
 
 import { sendWhatsAppOrderNotification } from '@/lib/whatsapp';
 
-const PREPAID_METHODS = ['card', 'upi'];
-
-// ─── Fee constants (must mirror the UI's order summary exactly) ──────────────
-// Card/UPI: 20 + 0 + 23 + 0  = ₹43 extra
-// COD:      20 + 137 + 23 + 19 = ₹199 extra
-const CONVENIENCE_FEE = 20;
-const PLATFORM_FEE = 23;
-const DELIVERY_FEE_PREPAID = 0;
-const DELIVERY_FEE_COD = 137;
-const COD_FEE_CHARGE = 19;
+import { calculateOrderSummary } from '@/lib/pricing';
 
 // ─── In-memory idempotency guard (prevents double-submit within 15s) ─────────
 const recentSubmissions = new Map<string, number>();
@@ -24,7 +15,7 @@ const DEDUP_WINDOW_MS = 15_000;
 
 export async function POST(req: NextRequest) {
   try {
-    const { shipping_name, shipping_address, phone, items, payment_method = 'card' } = await req.json();
+    const { shipping_name, shipping_address, phone, items, payment_method = 'card', couponCode } = await req.json();
 
     if (!shipping_name || !shipping_address || !phone || !items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Shipping details, phone number, and items are required.' }, { status: 400 });
@@ -59,8 +50,16 @@ export async function POST(req: NextRequest) {
       quantity: number;
       size: string;
       price: number;
+      mrp?: number;
       name: string;
     }[] = [];
+
+    // Fetch coupon data if provided
+    let couponData = null;
+    if (couponCode) {
+      const { coupons } = await import('@/db/schema');
+      couponData = await db.select().from(coupons).where(eq(coupons.code, couponCode)).get() || null;
+    }
 
     for (const item of items) {
       const product = await db.select().from(products).where(eq(products.id, item.productId)).get();
@@ -79,6 +78,7 @@ export async function POST(req: NextRequest) {
         quantity: item.quantity,
         size: item.size,
         price: product.price,
+        mrp: product.mrp,
         name: product.name,
       });
     }
@@ -86,13 +86,16 @@ export async function POST(req: NextRequest) {
     // ─── Fee breakdown (mirrored exactly from UI OrderSummary) ───────────────
     const isCOD = payment_method === 'cod';
 
-    const convenienceFee = CONVENIENCE_FEE;
-    const platformFee = PLATFORM_FEE;
-    const deliveryFee = isCOD ? DELIVERY_FEE_COD : DELIVERY_FEE_PREPAID;
-    const codFee = isCOD ? COD_FEE_CHARGE : 0;
-    const shippingFee = deliveryFee; // legacy compat column
-
-    const total = subtotal + convenienceFee + platformFee + deliveryFee + codFee;
+    const { 
+      subtotal: rawSubtotal, 
+      discount, 
+      convenienceFee, 
+      platformFee, 
+      deliveryFee, 
+      codFee, 
+      shippingFee, 
+      total 
+    } = calculateOrderSummary(validatedItems, isCOD, couponData);
 
     const itemsSummary = validatedItems.map(item => `${item.name} (${item.size}) x${item.quantity}`).join(', ');
 
@@ -105,7 +108,9 @@ export async function POST(req: NextRequest) {
           shippingName: shipping_name,
           shippingAddress: shipping_address,
           phone,
-          subtotal,
+          subtotal: rawSubtotal,
+          couponCode: couponData ? couponData.code : null,
+          discountAmount: discount,
           convenienceFee,
           platformFee,
           deliveryFee,
@@ -145,7 +150,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { orderId, subtotal, convenienceFee, platformFee, deliveryFee, codFee, shippingFee, total, cod: true, status: 'pending_cod' },
+        { orderId, subtotal: rawSubtotal, discount, convenienceFee, platformFee, deliveryFee, codFee, shippingFee, total, cod: true, status: 'pending_cod' },
         { status: 201 }
       );
     }

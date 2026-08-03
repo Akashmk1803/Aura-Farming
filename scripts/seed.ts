@@ -20,24 +20,41 @@ async function seed() {
   // ============================================================================
   // PRODUCT SEEDING
   // ============================================================================
-  const productCount = await db.select({ count: sql`count(*)` }).from(schema.products);
-  
-  if (Number(productCount[0].count) === 0) {
-    const initialProducts = [
-      { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, category: 'hoodies', categoryLabel: 'Hoodie', artSvgKey: 'hoodie', stock: 50, isLimited: false, isCustomizable: true },
-      { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, category: 'tees', categoryLabel: 'Tee', artSvgKey: 'tee', stock: 50, isLimited: false, isCustomizable: true },
-      { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, category: 'outerwear', categoryLabel: 'Jacket', artSvgKey: 'jacket', stock: 12, isLimited: true, isCustomizable: false },
-      { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, category: 'bottoms', categoryLabel: 'Cargo', artSvgKey: 'cargo', stock: 50, isLimited: false, isCustomizable: false },
-      { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, category: 'headwear', categoryLabel: 'Cap', artSvgKey: 'cap', stock: 50, isLimited: false, isCustomizable: false },
-      { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, category: 'tees', categoryLabel: 'Longsleeve', artSvgKey: 'longsleeve', stock: 50, isLimited: false, isCustomizable: true }
-    ];
+  const initialProducts = [
+    { id: 'A', name: 'Brand of Aura Hoodie', description: 'Heavyweight 400 GSM fleece', price: 3499, mrp: 4499, category: 'hoodies', categoryLabel: 'Hoodie', artSvgKey: 'hoodie', stock: 50, isLimited: false, isCustomizable: true },
+    { id: 'B', name: 'Sigil Oversized Tee', description: 'Boxy 240 GSM cotton', price: 1499, mrp: 1999, category: 'tees', categoryLabel: 'Tee', artSvgKey: 'tee', stock: 50, isLimited: false, isCustomizable: true },
+    { id: 'C', name: 'Crimson Line Jacket', description: 'Coated shell, taped seams', price: 4999, mrp: 5999, category: 'outerwear', categoryLabel: 'Jacket', artSvgKey: 'jacket', stock: 12, isLimited: true, isCustomizable: false },
+    { id: 'D', name: 'Void Cargo', description: 'Ripstop, eight pocket', price: 2799, mrp: 3499, category: 'bottoms', categoryLabel: 'Cargo', artSvgKey: 'cargo', stock: 50, isLimited: false, isCustomizable: false },
+    { id: 'E', name: 'Marked Cap', description: 'Structured six panel', price: 999, mrp: 1499, category: 'headwear', categoryLabel: 'Cap', artSvgKey: 'cap', stock: 50, isLimited: false, isCustomizable: false },
+    { id: 'F', name: 'Eclipse Longsleeve', description: 'Eclipse Longsleeve - Ribbed 260 GSM cotton', price: 1899, mrp: 2499, category: 'tees', categoryLabel: 'Longsleeve', artSvgKey: 'longsleeve', stock: 50, isLimited: false, isCustomizable: true }
+  ];
 
-    for (const p of initialProducts) {
-      await db.insert(schema.products).values(p).onConflictDoNothing();
-    }
-    console.log('✅ Seeded initial products catalog.');
+  for (const p of initialProducts) {
+    await db.insert(schema.products).values(p).onConflictDoUpdate({
+      target: schema.products.id,
+      set: { mrp: p.mrp }
+    });
+  }
+  console.log('✅ Seeded initial products catalog with MRP.');
+
+  // ============================================================================
+  // COUPON SEEDING
+  // ============================================================================
+  const couponCount = await db.select({ count: sql`count(*)` }).from(schema.coupons);
+  if (Number(couponCount[0].count) === 0) {
+    await db.insert(schema.coupons).values({
+      code: 'AURA10',
+      discountType: 'percentage',
+      discountValue: 10,
+      minOrderValue: 1000,
+      maxDiscount: 500,
+      isActive: true,
+      isOneTime: true,
+      expiryDate: null
+    }).onConflictDoNothing();
+    console.log('✅ Seeded AURA10 coupon.');
   } else {
-    console.log('⏩ Products already exist, skipping product seed.');
+    console.log('⏩ Coupons already exist, skipping coupon seed.');
   }
 
   // ============================================================================

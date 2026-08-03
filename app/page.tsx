@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { authClient } from '@/lib/auth-client';
+import { calculateOrderSummary, CouponData } from '@/lib/pricing';
 
 declare global {
   interface Window {
@@ -99,6 +100,7 @@ interface Product {
   name: string;
   desc: string;
   price: number;
+  mrp: number;
   cat: string;
   catLabel: string;
   art: keyof typeof SVGS;
@@ -111,6 +113,7 @@ interface CartItem {
   pid: string;
   name: string;
   price: number;
+  mrp: number;
   art: keyof typeof SVGS;
   size: string;
   qty: number;
@@ -122,6 +125,7 @@ interface OrderItem {
   size: string;
   quantity: number;
   price: number;
+  mrp?: number;
   name: string;
   artSvgKey: keyof typeof SVGS;
 }
@@ -355,7 +359,7 @@ export default function Storefront() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
-  const [cardSizes, setCardSizes] = useState<Record<string, string>>({});
+  const [cardSizes, setCardSizes] = useState<Record<string, string | null>>({});
 
   // Auth drawer states
   const [authOpen, setAuthOpen] = useState(false);
@@ -389,8 +393,15 @@ export default function Storefront() {
 
   // Details Modal states
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
-  const [detailSize, setDetailSize] = useState('M');
+  const [detailSize, setDetailSize] = useState<string | null>(null);
   const [detailOpenedFromWishlist, setDetailOpenedFromWishlist] = useState(false);
+
+  // Coupon states
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponData | null>(null);
+  const [bestCoupon, setBestCoupon] = useState<CouponData | null>(null);
+  const [welcomePopupOpen, setWelcomePopupOpen] = useState(false);
+  const [couponError, setCouponError] = useState('');
 
   // Checkout Wizard states
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping' | 'payment-method' | 'payment'>('cart');
@@ -473,6 +484,7 @@ export default function Storefront() {
           name: item.name,
           desc: item.description,
           price: item.price,
+          mrp: item.mrp || item.price,
           cat: item.category,
           catLabel: item.categoryLabel || item.category_label,
           art: (item.artSvgKey || item.art_svg_key) as any,
@@ -494,6 +506,26 @@ export default function Storefront() {
           fetchOrders();
           fetchWishlist();
           fetchAddresses();
+
+          // Delay 5s and show welcome popup if applicable
+          setTimeout(() => {
+            fetch('/api/coupons/active')
+              .then(resp => resp.json())
+              .then(couponData => {
+                if (couponData.success && couponData.bestCoupon) {
+                  setBestCoupon(couponData.bestCoupon);
+                  if (couponData.showWelcomePopup) {
+                    setWelcomePopupOpen(true);
+                    // Mark as shown so it doesn't trigger again for this user
+                    fetch('/api/user/welcome-popup', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ couponCode: couponData.bestCoupon.code })
+                    });
+                  }
+                }
+              }).catch(console.error);
+          }, 5000);
         }
       });
 
@@ -809,6 +841,7 @@ export default function Storefront() {
         shipping_address: fullAddressStr,
         phone: selectedAddress.mobile,
         payment_method: paymentMethod,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
         items: cart.map(item => ({
           productId: item.pid,
           size: item.size,
@@ -825,6 +858,8 @@ export default function Storefront() {
         const data = await res.json();
         if (res.ok) {
           setCart([]);
+          setAppliedCoupon(null);
+          setCouponCode('');
           updateLocalStorage([]);
           setCheckoutStep('cart');
           setCartOpen(false);
@@ -929,15 +964,24 @@ export default function Storefront() {
 
   // Helper properties
   const cartQty = cart.reduce((a, c) => a + c.qty, 0);
-  const cartSubtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
   
   const isCOD = paymentMethod === 'cod';
-  const feeConvenience = 20;
-  const feePlatform = 23;
-  const feeDelivery = isCOD ? 137 : 0;
-  const feeCOD = isCOD ? 19 : 0;
   
-  const cartTotal = cartSubtotal + feeConvenience + feePlatform + feeDelivery + feeCOD;
+  const mappedCart = cart.map(c => ({
+    price: c.price,
+    quantity: c.qty,
+    mrp: c.mrp,
+  }));
+  
+  const { 
+    subtotal: cartSubtotal, 
+    discount: cartDiscount, 
+    convenienceFee: feeConvenience, 
+    platformFee: feePlatform, 
+    deliveryFee: feeDelivery, 
+    codFee: feeCOD, 
+    total: cartTotal 
+  } = calculateOrderSummary(mappedCart, isCOD, appliedCoupon);
 
   const updateLocalStorage = (newCart: CartItem[]) => {
     try {
@@ -945,7 +989,11 @@ export default function Storefront() {
     } catch (_) { }
   };
 
-  const addToCart = (p: Product, size: string) => {
+  const addToCart = (p: Product, size: string | null) => {
+    if (!size) {
+      fly('Please select a size before adding to cart.');
+      return;
+    }
     if (!user) {
       setAuthMode('login');
       setAuthOpen(true);
@@ -957,7 +1005,7 @@ export default function Storefront() {
     if (found) {
       found.qty++;
     } else {
-      updated.push({ pid: p.id, name: p.name, price: p.price, art: p.art, size: size, qty: 1 });
+      updated.push({ pid: p.id, name: p.name, price: p.price, mrp: p.mrp, art: p.art, size: size, qty: 1 });
     }
     setCart(updated);
     updateLocalStorage(updated);
@@ -1627,7 +1675,7 @@ export default function Storefront() {
             const sizes = p.cat === 'headwear' ? ['OS'] : GARMENT_SIZES;
             return (
               <article key={p.id} className="card reveal in" data-cat={p.cat} data-pid={p.id}>
-                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
+                <div className="card-media" onClick={() => { setDetailProduct(p); setDetailSize(null); }}>
                   <span className="tag">001 / {p.id}</span>
                   <span className="cat-tag">{p.catLabel}</span>
                   <div className="fig">
@@ -1637,27 +1685,44 @@ export default function Storefront() {
                     </div>
                   </div>
                 </div>
-                <div className="card-body">
-                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(sizes[0]); }}>
-                    <div className="meta">
+                <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div className="top" onClick={() => { setDetailProduct(p); setDetailSize(null); }} style={{ flex: 1, display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                    <div className="meta" style={{ flex: 1, minWidth: 0 }}>
                       <h3>{p.name}</h3>
                       <div className="desc">{p.desc}</div>
                     </div>
-                    <div className="price">₹{p.price.toLocaleString('en-IN')}</div>
+                    <div className="price-block" style={{ minHeight: '68px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', textAlign: 'right', gap: '6px', flexShrink: 0 }}>
+                      {p.mrp && p.mrp > p.price ? (
+                        <>
+                          <div style={{ textDecoration: 'line-through', textDecorationColor: 'var(--red)', color: 'var(--dim2)', fontSize: '0.8rem', lineHeight: '1' }}>₹{p.mrp.toLocaleString('en-IN')}</div>
+                          <div style={{ color: 'var(--bone)', fontWeight: 700, fontSize: '1.25rem', lineHeight: '1' }}>₹{p.price.toLocaleString('en-IN')}</div>
+                          <div style={{ color: 'var(--green)', fontSize: '0.85rem', fontWeight: '700', lineHeight: '1' }}>{Math.round(((p.mrp - p.price) / p.mrp) * 100)}% OFF</div>
+                        </>
+                      ) : (
+                        <div style={{ color: 'var(--bone)', fontWeight: 700, fontSize: '1.25rem', lineHeight: '1' }}>₹{p.price.toLocaleString('en-IN')}</div>
+                      )}
+                    </div>
                   </div>
-                  <div className="sizes">
+                  
+                  <div className="sizes" style={{ height: '32px', flexShrink: 0, marginTop: '12px' }}>
                     {sizes.map(s => {
-                      const activeSize = cardSizes[p.id] || (p.cat === 'headwear' ? 'OS' : 'M');
+                      const activeSize = cardSizes[p.id] || null;
                       return (
-                        <button key={s} className={`size ${s === activeSize ? 'sel' : ''}`} onClick={() => setCardSizes(prev => ({ ...prev, [p.id]: s }))}>
+                        <button key={s} className={`size ${s === activeSize ? 'sel' : ''}`} onClick={(e) => {
+                          e.stopPropagation();
+                          setCardSizes(prev => ({ ...prev, [p.id]: s }));
+                        }}>
                           {s}
                         </button>
                       );
                     })}
                   </div>
-                  <button className="add" type="button" onClick={() => addToCart(p, cardSizes[p.id] || (p.cat === 'headwear' ? 'OS' : 'M'))}>
-                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Add to Cart
-                  </button>
+                  
+                  <div style={{ height: '42px', flexShrink: 0, marginTop: '12px' }}>
+                    <button className="add" type="button" style={{ height: '100%' }} onClick={() => addToCart(p, cardSizes[p.id] || null)}>
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Add to Cart
+                    </button>
+                  </div>
                 </div>
               </article>
             );
@@ -1884,8 +1949,99 @@ export default function Storefront() {
               )}
             </div>
             <div className="cart-foot" style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              
+              {/* Coupon Engine */}
+              {cart.length > 0 && (
+                <div style={{ marginBottom: '8px' }}>
+                  {!appliedCoupon && bestCoupon && (
+                    <div style={{ background: 'var(--coal2)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--bone)', fontSize: '0.85rem', fontWeight: 600 }}>
+                            <span>🎁</span> Available Coupon
+                          </div>
+                          <div style={{ color: 'var(--green)', fontFamily: 'var(--disp)', fontSize: '1.2rem', letterSpacing: '0.05em', marginTop: '4px' }}>
+                            {bestCoupon.code}
+                          </div>
+                          <div style={{ color: 'var(--dim)', fontSize: '0.75rem', marginTop: '2px' }}>
+                            {bestCoupon.discountValue}% OFF First Order
+                          </div>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            setCouponCode(bestCoupon.code);
+                            setCouponError('');
+                            try {
+                              const res = await fetch('/api/coupons/validate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ code: bestCoupon.code, subtotal: cartSubtotal })
+                              });
+                              const data = await res.json();
+                              if (data.success) {
+                                setAppliedCoupon(data.coupon);
+                                setCouponError('');
+                              } else {
+                                setCouponError(data.error || 'Invalid coupon');
+                              }
+                            } catch (err) {
+                              setCouponError('Failed to validate coupon');
+                            }
+                          }}
+                          style={{ background: 'var(--bone)', color: 'var(--coal)', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                          Apply
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="text"
+                      placeholder="COUPON CODE"
+                      value={couponCode}
+                      onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                      style={{ flex: 1, padding: '8px 12px', background: 'var(--coal2)', border: '1px solid var(--hair)', color: 'var(--bone)', fontFamily: 'var(--mono)', fontSize: '0.75rem', textTransform: 'uppercase' }}
+                    />
+                    <button 
+                      onClick={async () => {
+                        setCouponError('');
+                        if (!couponCode) return;
+                        try {
+                          const res = await fetch('/api/coupons/validate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ code: couponCode, subtotal: cartSubtotal })
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            setAppliedCoupon(data.coupon);
+                            setCouponError('');
+                          } else {
+                            setCouponError(data.error || 'Invalid coupon');
+                            setAppliedCoupon(null);
+                          }
+                        } catch (err) {
+                          setCouponError('Failed to validate coupon');
+                        }
+                      }}
+                      style={{ padding: '8px 16px', background: 'var(--bone)', color: 'var(--coal)', border: 'none', fontFamily: 'var(--mono)', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 'bold' }}>
+                      APPLY
+                    </button>
+                  </div>
+                  {couponError && <div style={{ color: 'var(--red)', fontSize: '0.7rem', marginTop: '4px' }}>{couponError}</div>}
+                  {appliedCoupon && !couponError && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(74, 222, 128, 0.1)', padding: '6px 10px', borderLeft: '2px solid #4ade80', marginTop: '8px' }}>
+                      <span style={{ color: '#4ade80', fontSize: '0.75rem', fontFamily: 'var(--mono)' }}>{appliedCoupon.code} APPLIED</span>
+                      <button onClick={() => { setAppliedCoupon(null); setCouponCode(''); }} style={{ background: 'none', border: 'none', color: '#4ade80', fontSize: '0.75rem', cursor: 'pointer' }}>REMOVE</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Bag Total</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
-              <div className="cart-row" style={{ color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹0</span></div>
+              {cartDiscount > 0 && (
+                <div className="cart-row" style={{ color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹{cartDiscount.toLocaleString('en-IN')}</span></div>
+              )}
               <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Convenience Fee</span><span>₹{feeConvenience}</span></div>
               <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Platform Fee</span><span>₹{feePlatform}</span></div>
               <div className="cart-row" style={{ color: 'var(--dim2)', fontSize: '0.85rem' }}>
@@ -2125,7 +2281,9 @@ export default function Storefront() {
               </div>
               <div style={{ marginTop: '20px', padding: '16px', background: 'var(--coal)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Bag Total</span><span>₹{cartSubtotal.toLocaleString('en-IN')}</span></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹0</span></div>
+                {cartDiscount > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4ade80', fontSize: '0.85rem' }}><span>Bag Discount</span><span>- ₹{cartDiscount.toLocaleString('en-IN')}</span></div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Convenience Fee</span><span>₹{feeConvenience}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}><span>Platform Fee</span><span>₹{feePlatform}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--dim2)', fontSize: '0.85rem' }}>
@@ -2186,6 +2344,8 @@ export default function Storefront() {
                   onBack={() => setCheckoutStep('payment-method')}
                   onSuccess={() => {
                     setCart([]);
+                    setAppliedCoupon(null);
+                    setCouponCode('');
                     updateLocalStorage([]);
                     setCheckoutStep('cart');
                     setCartOpen(false);
@@ -2200,6 +2360,30 @@ export default function Storefront() {
           </>
         )}
       </aside>
+
+      {/* WELCOME COUPON POPUP */}
+      {welcomePopupOpen && bestCoupon && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: 'var(--coal)', width: '100%', maxWidth: '440px', padding: '32px', borderRadius: '16px', border: '1px solid var(--hair2)', textAlign: 'center', position: 'relative' }}>
+            <button onClick={() => setWelcomePopupOpen(false)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: 'var(--dim)', fontSize: '1.2rem', cursor: 'pointer' }}>&times;</button>
+            <h2 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase', color: 'var(--bone)', marginBottom: '8px', fontSize: '1.8rem' }}>🎉 Welcome to Aura Farming</h2>
+            <p style={{ color: 'var(--dim)', fontSize: '0.95rem', marginBottom: '24px' }}>Enjoy {bestCoupon.discountValue}% OFF on your first purchase.</p>
+            <div style={{ color: 'var(--dim2)', fontSize: '0.85rem', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Coupon</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center' }}>
+              <div style={{ background: 'var(--coal2)', padding: '16px 32px', border: '2px dashed var(--hair)', borderRadius: '8px', color: 'var(--green)', fontFamily: 'var(--disp)', fontSize: '1.5rem', letterSpacing: '0.1em' }}>
+                {bestCoupon.code}
+              </div>
+              <button onClick={() => {
+                navigator.clipboard.writeText(bestCoupon.code);
+                fly('Coupon copied successfully.');
+              }} style={{ background: 'var(--bone)', color: 'var(--coal)', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontFamily: 'var(--disp)', textTransform: 'uppercase', fontSize: '1.1rem', width: '100%', maxWidth: '200px' }}>
+                Copy Coupon
+              </button>
+            </div>
+            <p style={{ color: 'var(--dim2)', fontSize: '0.75rem', marginTop: '20px', fontStyle: 'italic' }}>*Valid for a limited time. Min order ₹{bestCoupon.minOrderValue.toLocaleString('en-IN')}</p>
+          </div>
+        </div>
+      )}
 
       {/* USER AUTH DRAWER */}
       <aside className={`cart ${authOpen ? 'open' : ''}`} style={{ zIndex: 190 }}>
@@ -2996,7 +3180,17 @@ export default function Storefront() {
               <div className="pdetail-body">
                 <span className="pdetail-cat">{detailProduct.catLabel}</span>
                 <h2>{detailProduct.name}</h2>
-                <div className="pdetail-price">₹{detailProduct.price.toLocaleString('en-IN')}</div>
+                <div className="pdetail-price" style={{ display: 'flex', flexDirection: 'column', gap: '6px', margin: '16px 0' }}>
+                  {detailProduct.mrp && detailProduct.mrp > detailProduct.price ? (
+                    <>
+                      <div style={{ textDecoration: 'line-through', textDecorationColor: 'var(--red)', color: 'var(--dim2)', fontSize: '0.9rem', lineHeight: '1' }}>₹{detailProduct.mrp.toLocaleString('en-IN')}</div>
+                      <div style={{ color: 'var(--bone)', fontWeight: 700, fontSize: '1.4rem', lineHeight: '1' }}>₹{detailProduct.price.toLocaleString('en-IN')}</div>
+                      <div style={{ color: 'var(--green)', fontSize: '0.9rem', fontWeight: '700', lineHeight: '1' }}>{Math.round(((detailProduct.mrp - detailProduct.price) / detailProduct.mrp) * 100)}% OFF</div>
+                    </>
+                  ) : (
+                    <div style={{ color: 'var(--bone)', fontWeight: 700, fontSize: '1.4rem', lineHeight: '1' }}>₹{detailProduct.price.toLocaleString('en-IN')}</div>
+                  )}
+                </div>
                 <p className="pdetail-desc">{detailProduct.desc}</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
                   <span className="foot-label">Select Size</span>
@@ -3014,6 +3208,10 @@ export default function Storefront() {
                   </div>
                 </div>
                 <button className="pdetail-add-btn" type="button" onClick={() => {
+                  if (!detailSize) {
+                    fly('Please select a size.');
+                    return;
+                  }
                   addToCart(detailProduct, detailSize);
                   setDetailProduct(null);
                   setCheckoutStep('cart');

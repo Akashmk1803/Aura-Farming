@@ -13,6 +13,7 @@
   --disp:'Anton',sans-serif;
   --serif:'Instrument Serif',serif;
   --body:'Inter Tight',sans-serif;
+  --green:#22c55e;
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth;background:var(--ink);overscroll-behavior-y:none;-webkit-text-size-adjust:100%}

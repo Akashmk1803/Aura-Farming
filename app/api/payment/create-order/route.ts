@@ -1,22 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { products } from '@/db/schema';
+import { products, coupons } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
 import Razorpay from 'razorpay';
 
-// ─── Fee constants (must mirror the UI's order summary exactly) ──────────────
-const CONVENIENCE_FEE = 20;
-const PLATFORM_FEE = 23;
-const DELIVERY_FEE_PREPAID = 0;
+import { calculateOrderSummary } from '@/lib/pricing';
 
 export async function POST(req: NextRequest) {
   try {
-    const { items } = await req.json();
+    const body = await req.json();
+    const items = body.items;
+    const couponCode = body.couponCode;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Items are required.' }, { status: 400 });
+    }
+
+    let couponData = null;
+    if (couponCode) {
+      couponData = await db.select().from(coupons).where(eq(coupons.code, couponCode)).get() || null;
     }
 
     // Retrieve session user
@@ -44,10 +48,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const convenienceFee = CONVENIENCE_FEE;
-    const platformFee = PLATFORM_FEE;
-    const deliveryFee = DELIVERY_FEE_PREPAID;
-    const total = subtotal + convenienceFee + platformFee + deliveryFee;
+    const { subtotal: rawSubtotal, discount, convenienceFee, platformFee, deliveryFee, total } = calculateOrderSummary(validatedItems, false, couponData);
 
     const keyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
@@ -77,7 +78,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         razorpayOrderId: razorpayOrder.id,
-        subtotal,
+        subtotal: rawSubtotal,
+        discount,
         convenienceFee,
         platformFee,
         deliveryFee,
