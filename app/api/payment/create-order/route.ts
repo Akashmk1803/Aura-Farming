@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { products, coupons } from '@/db/schema';
+import { products, coupons, couponUsages } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { headers } from 'next/headers';
@@ -28,6 +28,34 @@ export async function POST(req: NextRequest) {
       headers: await headers()
     });
     const userId = session?.user?.id || 'guest';
+
+    if (couponData) {
+      if (!couponData.isActive) {
+        return NextResponse.json({ error: 'This coupon is no longer active.' }, { status: 400 });
+      }
+
+      if (couponData.expiryDate && new Date() > couponData.expiryDate) {
+        return NextResponse.json({ error: 'This coupon has expired.' }, { status: 400 });
+      }
+
+      if (couponData.usageLimit || couponData.isOneTime) {
+        const usages = await db.select().from(couponUsages).where(eq(couponUsages.couponCode, couponData.code)).all();
+        
+        if (couponData.usageLimit && usages.filter(u => u.orderId).length >= couponData.usageLimit) {
+          return NextResponse.json({ error: 'This coupon has reached its usage limit.' }, { status: 400 });
+        }
+
+        if (couponData.isOneTime) {
+          if (!session?.user) {
+            return NextResponse.json({ error: 'You must be logged in to use this one-time coupon.' }, { status: 401 });
+          }
+          const hasUsed = usages.some(u => u.userId === session.user.id && u.orderId);
+          if (hasUsed) {
+            return NextResponse.json({ error: 'You have already used this coupon.' }, { status: 400 });
+          }
+        }
+      }
+    }
 
     // ─── Synchronous stock validation & subtotal ────────────────────
     let subtotal = 0;

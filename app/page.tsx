@@ -107,7 +107,12 @@ interface Product {
   stock: number;
   isLimited: boolean;
   isCustomizable: boolean;
+  imageUrl?: string | null;
+  status?: string;
+  featured?: boolean;
 }
+
+
 
 interface CartItem {
   pid: string;
@@ -117,6 +122,7 @@ interface CartItem {
   art: keyof typeof SVGS;
   size: string;
   qty: number;
+  imageUrl?: string | null;
 }
 
 interface OrderItem {
@@ -128,6 +134,7 @@ interface OrderItem {
   mrp?: number;
   name: string;
   artSvgKey: keyof typeof SVGS;
+  imageUrl?: string | null;
 }
 
 interface Order {
@@ -374,10 +381,6 @@ export default function Storefront() {
   const [updateCurrentPassword, setUpdateCurrentPassword] = useState('');
   const [updateNewPassword, setUpdateNewPassword] = useState('');
 
-  // Admin Portal Drawer states
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [adminStats, setAdminStats] = useState<any>(null);
-
   // Wishlist states
   const [wishlistItems, setWishlistItems] = useState<Product[]>([]);
   const [wishlistOpen, setWishlistOpen] = useState(false);
@@ -490,7 +493,10 @@ export default function Storefront() {
           art: (item.artSvgKey || item.art_svg_key) as any,
           stock: item.stock,
           isLimited: Boolean(item.isLimited || item.is_limited),
-          isCustomizable: Boolean(item.isCustomizable || item.is_customizable)
+          isCustomizable: Boolean(item.isCustomizable || item.is_customizable),
+          imageUrl: item.imageUrl || item.image_url || null,
+          status: item.status || 'in_stock',
+          featured: Boolean(item.featured)
         }));
         setProductsList(formatted);
       })
@@ -582,17 +588,6 @@ export default function Storefront() {
     }
   };
 
-  const fetchAdminStats = async () => {
-    try {
-      const res = await fetch('/api/admin/stats');
-      if (res.ok) {
-        const data = await res.json();
-        setAdminStats(data);
-      }
-    } catch (err) {
-      console.error('Error loading admin stats:', err);
-    }
-  };
 
   const toggleWishlist = async (productId: string, size?: string) => {
     if (!user) {
@@ -766,7 +761,6 @@ export default function Storefront() {
     setUser(null);
     setUserOrders([]);
     setWishlistItems([]);
-    setAdminOpen(false);
     setAuthOpen(false);
     // Clear cart from state AND localStorage so it doesn't rehydrate after login
     setCart([]);
@@ -774,11 +768,6 @@ export default function Storefront() {
     fly('Logged out successfully.');
   };
 
-  // Open admin drawer and always fetch fresh stats
-  const openAdminDrawer = () => {
-    setAdminOpen(true);
-    fetchAdminStats();
-  };
 
   const handleAddressSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -896,54 +885,6 @@ export default function Storefront() {
     }
   };
 
-  // Admin restock stock updates
-  const handleAdminRestock = async (productId: string, currentStock: number) => {
-    const inputVal = prompt('Enter new stock quantity:', String(currentStock));
-    if (inputVal === null) return;
-    const newStock = parseInt(inputVal, 10);
-    if (isNaN(newStock) || newStock < 0) {
-      fly('Please enter a valid stock number.');
-      return;
-    }
-    try {
-      const res = await fetch('/api/admin/restock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, newStock })
-      });
-      if (res.ok) {
-        fly(`Product ${productId} stock updated to ${newStock}.`);
-        fetchAdminStats();
-      } else {
-        const err = await res.json();
-        fly(err.error || 'Failed to update stock.');
-      }
-    } catch (_) {
-      fly('Restock connection error');
-    }
-  };
-
-  // Admin manual status override updates
-  const handleAdminUpdateStatus = async (orderId: string) => {
-    const newStatus = prompt('Enter new status (pending/paid/shipped/out_for_delivery/delivered):');
-    if (!newStatus) return;
-    try {
-      const res = await fetch('/api/admin/update-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, status: newStatus })
-      });
-      if (res.ok) {
-        fly(`Order status overridden successfully.`);
-        fetchAdminStats();
-      } else {
-        const err = await res.json();
-        fly(err.error || 'Failed to override status.');
-      }
-    } catch (_) {
-      fly('Override connection error');
-    }
-  };
 
   // Retrieve tracking progress
   const handleTrackingSearch = async (e: React.FormEvent) => {
@@ -1005,7 +946,7 @@ export default function Storefront() {
     if (found) {
       found.qty++;
     } else {
-      updated.push({ pid: p.id, name: p.name, price: p.price, mrp: p.mrp, art: p.art, size: size, qty: 1 });
+      updated.push({ pid: p.id, name: p.name, price: p.price, mrp: p.mrp, art: p.art, size: size, qty: 1, imageUrl: p.imageUrl });
     }
     setCart(updated);
     updateLocalStorage(updated);
@@ -1391,6 +1332,8 @@ export default function Storefront() {
 
   // Filter storefront cards matching search and tab states
   const filteredProducts = productsList.filter(p => {
+    if (p.status === 'draft' || p.status === 'archived') return false;
+
     let matchesCat = activeCat === 'all' || p.cat === activeCat;
     if (activeCat === 'limited') {
       matchesCat = p.isLimited === true;
@@ -1555,8 +1498,12 @@ export default function Storefront() {
                               }}
                               className="suggestion-item"
                             >
-                              <div style={{ width: '28px', height: '28px', background: 'var(--coal)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                <div style={{ width: '22px', height: '22px', transform: 'scale(0.8)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
+                              <div style={{ width: '28px', height: '28px', background: 'var(--coal)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                                {item.imageUrl ? (
+                                  <img src={item.imageUrl} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                ) : (
+                                  <div style={{ width: '22px', height: '22px', transform: 'scale(0.8)' }} dangerouslySetInnerHTML={{ __html: SVGS[item.art] }}></div>
+                                )}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', flex: 1, overflow: 'hidden' }}>
                                 <span style={{ fontSize: '0.74rem', color: 'var(--bone)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
@@ -1584,7 +1531,6 @@ export default function Storefront() {
           <button className="icon-btn wishlist-btn" onClick={() => {
             setCartOpen(false);
             setAuthOpen(false);
-            setAdminOpen(false);
             setDetailProduct(null);
             setTrackingOpen(false);
             setWishlistOpen(true);
@@ -1605,7 +1551,7 @@ export default function Storefront() {
       {/* HERO SECTION */}
       <header>
         <div className="hero-glow"></div>
-        <img className="hero-mark" src="data:image/png;base64,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" alt="" aria-hidden="true" />
+        <img className="hero-mark" alt="Aura Farming Logo" src="data:image/png;base64,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" />
         <canvas id="embers" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}></canvas>
 
         <div className="hero-inner">
@@ -1681,7 +1627,11 @@ export default function Storefront() {
                   <div className="fig">
                     <div className="shadow"></div>
                     <div className="lift">
-                      <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS[p.art] }}></div>
+                      {p.imageUrl ? (
+                        <div className="spin"><img src={p.imageUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
+                      ) : (
+                        <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS[p.art] }}></div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1863,9 +1813,9 @@ export default function Storefront() {
             </a>
             <p className="foot-tag">Heavyweight streetwear forged in black and red. One line runs through everything.</p>
             <div className="foot-actions">
-              <button className="foot-ig" type="button" aria-label="Instagram" onClick={() => fly('Instagram coming with Drop 001')}>
+              <a className="foot-ig" href="https://www.instagram.com/aura__farming999?igsh=ZDNoZXM4anI5MzNi" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
                 <svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2m0 1.8c-3.1 0-3.5 0-4.8.1-1.1.1-1.5.2-1.9.3-.5.2-.8.4-1.1.7-.3.3-.6.6-.7 1.1-.1.4-.3.8-.3 1.9-.1 1.2-.1 1.6-.1 4.8s0 3.5.1 4.8c.1 1.1.2 1.5.3 1.9.2.5.4.8.7 1.1.3.3.6.6 1.1.7.4.1.8.3 1.9.3 1.2.1 1.6.1 4.8.1s3.5 0 4.8-.1c1.1-.1 1.5-.2 1.9-.3.5-.2.8-.4 1.1-.7.3-.3.6-.6.7-1.1.1-.4.3-.8.3-1.9.1-1.2.1-1.6.1-4.8s0-3.5-.1-4.8c-.1-1.1-.2-1.5-.3-1.9-.2-.5-.4-.8-.7-1.1-.3-.3-.6-.6-1.1-.7-.4-.1-.8-.3-1.9-.3-1.2-.1-1.6-.1-4.8-.1zm0 3.1a4.9 4.9 0 1 1 0 9.8 4.9 4.9 0 0 1 0-9.8zm0 8.1a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zm6.2-8.3a1.1 1.1 0 1 1-2.3 0 1.1 1.1 0 0 1 2.3 0z" /></svg>
-              </button>
+              </a>
               <button className="foot-chip" type="button" onClick={() => setTrackingOpen(true)}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11l2 4h5M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm11 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" /></svg>
                 Track Order
@@ -1898,7 +1848,7 @@ export default function Storefront() {
           <div className="foot-copy">
             &copy; 2026 Aura Farming &middot;{' '}
             {(user as any)?.role === 'admin' && (
-              <a onClick={openAdminDrawer} style={{ color: 'var(--dim2)', textDecoration: 'underline', cursor: 'pointer' }}>
+              <a href="/admin" style={{ color: 'var(--dim2)', textDecoration: 'underline', cursor: 'pointer' }}>
                 Admin Portal
               </a>
             )}
@@ -1907,8 +1857,8 @@ export default function Storefront() {
       </footer>
 
       {/* BACKDROP OVERLAY */}
-      {(cartOpen || authOpen || adminOpen || detailProduct || trackingOpen || wishlistOpen) && (
-        <div className="overlay open" onClick={() => { setCartOpen(false); setAuthOpen(false); setAdminOpen(false); setDetailProduct(null); setTrackingOpen(false); setWishlistOpen(false); }}></div>
+      {(cartOpen || authOpen || detailProduct || trackingOpen || wishlistOpen) && (
+        <div className="overlay open" onClick={() => { setCartOpen(false); setAuthOpen(false); setDetailProduct(null); setTrackingOpen(false); setWishlistOpen(false); }}></div>
       )}
 
       {/* SHOPPING CART / CHECKOUT DRAWER */}
@@ -1922,7 +1872,13 @@ export default function Storefront() {
             <div className="cart-items" style={{ padding: '20px 24px' }}>
               {cart.map((c, idx) => (
                 <div className="citem" key={`${c.pid}-${c.size}`}>
-                  <div className="citem-fig" dangerouslySetInnerHTML={{ __html: SVGS[c.art] }}></div>
+                  <div className="citem-fig" style={{ overflow: 'hidden' }}>
+                    {c.imageUrl ? (
+                      <img src={c.imageUrl} alt={c.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    ) : (
+                      <div dangerouslySetInnerHTML={{ __html: SVGS[c.art] }}></div>
+                    )}
+                  </div>
                   <div className="citem-info">
                     <h4>{c.name}</h4>
                     <div className="sz">Size {c.size}</div>
@@ -2367,7 +2323,9 @@ export default function Storefront() {
           <div style={{ background: 'var(--coal)', width: '100%', maxWidth: '440px', padding: '32px', borderRadius: '16px', border: '1px solid var(--hair2)', textAlign: 'center', position: 'relative' }}>
             <button onClick={() => setWelcomePopupOpen(false)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: 'var(--dim)', fontSize: '1.2rem', cursor: 'pointer' }}>&times;</button>
             <h2 style={{ fontFamily: 'var(--disp)', textTransform: 'uppercase', color: 'var(--bone)', marginBottom: '8px', fontSize: '1.8rem' }}>🎉 Welcome to Aura Farming</h2>
-            <p style={{ color: 'var(--dim)', fontSize: '0.95rem', marginBottom: '24px' }}>Enjoy {bestCoupon.discountValue}% OFF on your first purchase.</p>
+            <p style={{ color: 'var(--dim)', fontSize: '0.95rem', marginBottom: '8px' }}>
+              {bestCoupon.description || `Enjoy ${bestCoupon.discountType === 'percentage' ? bestCoupon.discountValue + '% OFF' : '₹' + bestCoupon.discountValue + ' OFF'} on your first purchase.`}
+            </p>
             <div style={{ color: 'var(--dim2)', fontSize: '0.85rem', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Coupon</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', alignItems: 'center' }}>
               <div style={{ background: 'var(--coal2)', padding: '16px 32px', border: '2px dashed var(--hair)', borderRadius: '8px', color: 'var(--green)', fontFamily: 'var(--disp)', fontSize: '1.5rem', letterSpacing: '0.1em' }}>
@@ -2380,7 +2338,7 @@ export default function Storefront() {
                 Copy Coupon
               </button>
             </div>
-            <p style={{ color: 'var(--dim2)', fontSize: '0.75rem', marginTop: '20px', fontStyle: 'italic' }}>*Valid for a limited time. Min order ₹{bestCoupon.minOrderValue.toLocaleString('en-IN')}</p>
+            <p style={{ color: 'var(--dim2)', fontSize: '0.75rem', marginTop: '20px', fontStyle: 'italic' }}>*Min order ₹{bestCoupon.minOrderValue.toLocaleString('en-IN')}. {bestCoupon.expiryDate ? `Expires: ${new Date(bestCoupon.expiryDate).toLocaleDateString('en-IN')}` : 'Valid for a limited time.'}</p>
           </div>
         </div>
       )}
@@ -2602,251 +2560,6 @@ export default function Storefront() {
             </div>
           )
         )}
-      </aside>
-
-      {/* ADMIN CONSOLE DRAWER */}
-      <aside className={`cart ${adminOpen ? 'open' : ''}`} style={{ maxWidth: '600px', width: '100%', borderLeft: '1px solid var(--hair2)', zIndex: 190 }}>
-        <div className="cart-head">
-          <h3 style={{ fontFamily: 'var(--disp)', fontWeight: 400, fontSize: '1.3rem', textTransform: 'uppercase' }}>Admin Console</h3>
-          <button className="cart-close" onClick={() => setAdminOpen(false)}>&times;</button>
-        </div>
-
-        {/* Loading skeleton while stats are being fetched */}
-        {!adminStats && adminOpen && (
-          <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '24px' }}>
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} style={{ height: '72px', background: 'rgba(236,232,225,0.04)', border: '1px solid var(--hair)', borderRadius: '12px', animation: 'pulse 1.6s ease-in-out infinite' }} />
-            ))}
-            <p style={{ textAlign: 'center', color: 'var(--dim)', fontSize: '0.75rem', fontFamily: 'var(--serif)', fontStyle: 'italic', marginTop: '8px' }}>Loading analytics…</p>
-          </div>
-        )}
-
-        {adminStats && (() => {
-          const lowStockCount = adminStats.products.filter((p: any) => p.stock < 15).length;
-          const aov = Math.round(adminStats.totalSales / (adminStats.totalOrders || 1));
-
-          // Calculate daily sales trend data
-          const salesMap: Record<string, { count: number; total: number }> = {};
-          const daysToTrend = 7;
-          for (let i = daysToTrend - 1; i >= 0; i--) {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-            salesMap[label] = { count: 0, total: 0 };
-          }
-
-          adminStats.orders.forEach((o: any) => {
-            if (!o.created_at) return;
-            const date = parseSqlDate(o.created_at);
-            if (!date) return;
-            const label = date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-            if (salesMap[label] !== undefined) {
-              salesMap[label].count++;
-              salesMap[label].total += o.total;
-            }
-          });
-
-          const trendData = Object.entries(salesMap).map(([date, data]) => ({
-            date,
-            total: data.total
-          }));
-
-          const maxTrendSales = Math.max(...trendData.map(t => t.total), 2000);
-
-          // SVG points calculation
-          const svgW = 500;
-          const svgH = 120;
-          const paddingLeft = 46;
-          const paddingRight = 16;
-          const chartW = svgW - paddingLeft - paddingRight;
-          const chartH = svgH - 24;
-
-          const points = trendData.map((d, i) => {
-            const x = paddingLeft + (i * chartW) / (daysToTrend - 1);
-            const y = chartH - (d.total * (chartH - 12)) / maxTrendSales;
-            return { x, y, val: d.total, date: d.date };
-          });
-
-          const linePathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-          const areaPathD = points.length > 0 ? `${linePathD} L ${points[points.length - 1].x} ${chartH} L ${points[0].x} ${chartH} Z` : '';
-
-          const topProducts = (adminStats.salesByProduct || []).slice(0, 3);
-          const maxTpQty = Math.max(...topProducts.map((p: any) => p.totalQty), 1);
-
-          return (
-            <div className="cart-items" style={{ display: 'flex', flexDirection: 'column', gap: '24px', padding: '20px 24px', overflowY: 'auto' }}>
-
-              {/* Stat Widgets 2x2 Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div style={{ background: 'rgba(236,232,225,.03)', border: '1px solid var(--hair2)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '0.58rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.05em' }}>Total Revenue</span>
-                  <b style={{ fontSize: '1.25rem', color: 'var(--bone)', fontFamily: 'var(--disp)' }}>₹{adminStats.totalSales.toLocaleString('en-IN')}</b>
-                </div>
-                <div style={{ background: 'rgba(236,232,225,.03)', border: '1px solid var(--hair2)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '0.58rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.05em' }}>Total Initiations</span>
-                  <b style={{ fontSize: '1.25rem', color: 'var(--bone)', fontFamily: 'var(--disp)' }}>{adminStats.totalOrders}</b>
-                </div>
-                <div style={{ background: 'rgba(236,232,225,.03)', border: '1px solid var(--hair2)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '0.58rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.05em' }}>Average Order Value</span>
-                  <b style={{ fontSize: '1.25rem', color: 'var(--bone)', fontFamily: 'var(--disp)' }}>₹{aov.toLocaleString('en-IN')}</b>
-                </div>
-                <div style={{ background: 'rgba(236,232,225,.03)', border: '1px solid var(--hair2)', borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '0.58rem', textTransform: 'uppercase', color: 'var(--dim2)', letterSpacing: '0.05em' }}>Low Stock Alerts</span>
-                  <b style={{ fontSize: '1.25rem', color: lowStockCount > 0 ? 'var(--red)' : 'var(--bone)', fontFamily: 'var(--disp)' }}>{lowStockCount} items</b>
-                </div>
-              </div>
-
-              {/* Sales Trend SVG Line Graph */}
-              <div>
-                <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Sales Analytics (Last 7 Days)</h5>
-                <div style={{ background: 'rgba(236,232,225,0.01)', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '16px 12px 8px 12px' }}>
-                  <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
-                    <defs>
-                      <linearGradient id="chartLineGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--red)" stopOpacity="0.22" />
-                        <stop offset="100%" stopColor="var(--red)" stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-
-                    {/* Horizontal Scale Lines */}
-                    {[0, 0.5, 1].map((ratio, gridIdx) => {
-                      const gridY = chartH - ratio * (chartH - 12);
-                      const scaleVal = Math.round(ratio * maxTrendSales);
-                      return (
-                        <g key={gridIdx}>
-                          <line x1={paddingLeft} y1={gridY} x2={svgW - paddingRight} y2={gridY} stroke="var(--hair)" strokeWidth="1" strokeDasharray="3,3" />
-                          <text x={paddingLeft - 8} y={gridY + 3} fill="var(--dim2)" fontSize="9" fontFamily="monospace" textAnchor="end">₹{scaleVal}</text>
-                        </g>
-                      );
-                    })}
-
-                    {/* Area Fill */}
-                    {areaPathD && <path d={areaPathD} fill="url(#chartLineGrad)" />}
-
-                    {/* Glowing Stroke Path */}
-                    {linePathD && (
-                      <path
-                        d={linePathD}
-                        fill="none"
-                        stroke="var(--red)"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        style={{ filter: 'drop-shadow(0 0 5px rgba(225,6,0,0.5))' }}
-                      />
-                    )}
-
-                    {/* Data Circles & Tooltip Values */}
-                    {points.map((p, i) => (
-                      <g key={i}>
-                        <circle cx={p.x} cy={p.y} r="3" fill="#fff" stroke="var(--red)" strokeWidth="2.5" />
-                        <text x={p.x} y={p.y - 8} fill="var(--bone)" fontSize="8" fontFamily="monospace" textAnchor="middle">
-                          {p.val > 0 ? `₹${Math.round(p.val / 1000)}k` : ''}
-                        </text>
-                        {/* Day label */}
-                        <text x={p.x} y={svgH - 4} fill="var(--dim2)" fontSize="8" textAnchor="middle">
-                          {p.date.split(' ')[0]}
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
-                </div>
-              </div>
-
-              {/* Top Selling Products Share Progress Bars */}
-              {topProducts.length > 0 && (
-                <div>
-                  <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Top Selling Products</h5>
-                  <div style={{ background: 'rgba(236,232,225,0.02)', border: '1px solid var(--hair2)', borderRadius: '16px', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {topProducts.map((tp: any) => {
-                      const percent = Math.min((tp.totalQty / maxTpQty) * 100, 100);
-                      return (
-                        <div key={tp.productId} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--bone)', fontSize: '0.8rem', fontWeight: 500 }}>{tp.name}</span>
-                            <span style={{ color: 'var(--red)', fontSize: '0.74rem', fontWeight: 600, fontFamily: 'monospace' }}>
-                              {tp.totalQty} units &middot; ₹{tp.totalRevenue.toLocaleString('en-IN')}
-                            </span>
-                          </div>
-                          <div style={{ width: '100%', height: '6px', background: 'var(--coal)', borderRadius: '3px', overflow: 'hidden' }}>
-                            <div style={{ width: `${percent}%`, height: '100%', background: 'linear-gradient(to right, var(--red), #ff6a5e)', borderRadius: '3px', boxShadow: '0 0 6px var(--red)' }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Inventory Restock Console */}
-              <div>
-                <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Inventory Restock Console</h5>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {adminStats.products.map((p: any) => (
-                    <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px' }}>
-                      <div>
-                        <span style={{ fontFamily: 'monospace', color: 'var(--red)', fontSize: '0.75rem', marginRight: '6px' }}>[{p.id}]</span>
-                        <span style={{ color: 'var(--bone)', fontSize: '0.85rem' }}>{p.name}</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '0.8rem', color: p.stock < 10 ? 'var(--red)' : 'var(--dim)' }}>Stock: <b>{p.stock}</b></span>
-                        <button className="foot-chip" onClick={() => handleAdminRestock(p.id, p.stock)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem' }}>Restock</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Order Status Override */}
-              <div>
-                <h5 className="foot-label" style={{ marginBottom: '12px', borderBottom: '1px solid var(--hair2)', paddingBottom: '8px' }}>Order Status Override</h5>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
-                  {groupOrdersByDay(adminStats.orders).map(({ bucket, items }: { bucket: string; items: any[] }) => (
-                    <div key={bucket}>
-                      <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--dim2)', fontFamily: 'var(--disp)', marginBottom: '6px', paddingBottom: '4px', borderBottom: '1px solid var(--hair2)' }}>
-                        {bucket}
-                      </div>
-                      {items.map((o: any) => {
-                        const d = parseSqlDate(o.createdAt ?? o.created_at);
-                        return (
-                          <div key={o.id} style={{ background: 'rgba(236,232,225,0.03)', border: '1px solid var(--hair)', borderRadius: '8px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                              <span style={{ color: 'var(--bone)' }}>{o.id}</span>
-                              <span className="tag red" style={{ fontSize: '0.6rem', padding: '2px 6px', borderRadius: '4px' }}>{o.status}</span>
-                            </div>
-                            {d && <div style={{ fontSize: '0.65rem', color: 'var(--dim2)' }}>{formatOrderTime(d)}</div>}
-                            {/* Product summary */}
-                            {o.items && o.items.length > 0 && (() => {
-                              const visible = o.items.slice(0, 2);
-                              const extra = o.items.length - 2;
-                              return (
-                                <div style={{ fontSize: '0.65rem', color: 'var(--dim2)', marginTop: '2px' }}>
-                                  <span style={{ color: 'var(--dim)', fontFamily: 'var(--disp)', textTransform: 'uppercase', fontSize: '0.55rem', letterSpacing: '0.08em' }}>Products</span>
-                                  {visible.map((it: any, i: number) => (
-                                    <div key={i} style={{ color: 'var(--dim2)', paddingLeft: '6px' }}>
-                                      {it.name} ({it.size}) ×{it.quantity}
-                                    </div>
-                                  ))}
-                                  {extra > 0 && <div style={{ color: 'var(--dim)', paddingLeft: '6px', fontStyle: 'italic' }}>+{extra} more</div>}
-                                </div>
-                              );
-                            })()}
-                            <div style={{ fontSize: '0.75rem', color: 'var(--dim)' }}>Recipient: {o.shippingName ?? o.shipping_name} &middot; Total: ₹{o.total.toLocaleString('en-IN')}</div>
-                            <button className="foot-chip" onClick={() => handleAdminUpdateStatus(o.id)} style={{ height: '24px', padding: '0 8px', fontSize: '0.55rem', alignSelf: 'flex-start' }}>Change Status</button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          );
-        })()}
-        <div className="cart-foot" style={{ background: 'var(--coal2)' }}>
-          <div className="cart-note" style={{ fontSize: '0.6rem' }}>Admin Mode &middot; Read/Write SQLite Access Enabled</div>
-        </div>
       </aside>
 
       {/* ORDER TRACKING PORTAL DRAWER */}
@@ -3173,7 +2886,11 @@ export default function Storefront() {
                 <div className="fig" style={{ width: '220px', aspectRatio: '200/220', position: 'relative' }}>
                   <div className="shadow" style={{ transform: 'translateX(-50%) scale(1.3)', opacity: 0.45, bottom: '-6px' }}></div>
                   <div className="lift" style={{ transform: 'translateY(-20px) scale(1.15)' }}>
-                    <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS[detailProduct.art] }}></div>
+                    {detailProduct.imageUrl ? (
+                      <div className="spin"><img src={detailProduct.imageUrl} alt={detailProduct.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} /></div>
+                    ) : (
+                      <div className="spin" dangerouslySetInnerHTML={{ __html: SVGS[detailProduct.art] }}></div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -13,7 +13,10 @@ export type CouponData = {
   maxDiscount: number | null;
   isActive: boolean;
   isOneTime: boolean;
-  expiryDate: Date | null;
+  expiryDate: Date | string | null;
+  description?: string | null;
+  isWelcome?: boolean;
+  usageLimit?: number | null;
 };
 
 export type PricingSummary = {

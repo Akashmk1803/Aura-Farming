@@ -13,6 +13,9 @@ export const products = sqliteTable('products', {
   isLimited: integer('is_limited', { mode: 'boolean' }).default(false).notNull(),
   isCustomizable: integer('is_customizable', { mode: 'boolean' }).default(false).notNull(),
   mrp: integer('mrp').default(0).notNull(),
+  status: text('status').default('in_stock').notNull(),
+  featured: integer('featured', { mode: 'boolean' }).default(false).notNull(),
+  imageUrl: text('image_url'),
 });
 
 // Better Auth Tables
@@ -26,6 +29,8 @@ export const user = sqliteTable('user', {
   updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
   role: text('role').default('user'),
   shippingAddress: text('shippingAddress').default(''),
+  phone: text('phone').default(''),
+  status: text('status').default('active'),
 });
 
 export const session = sqliteTable('session', {
@@ -129,6 +134,10 @@ export const coupons = sqliteTable('coupons', {
   isActive: integer('is_active', { mode: 'boolean' }).default(true).notNull(),
   isOneTime: integer('is_one_time', { mode: 'boolean' }).default(false).notNull(),
   expiryDate: integer('expiry_date', { mode: 'timestamp' }),
+  usageLimit: integer('usage_limit'),
+  isWelcome: integer('is_welcome', { mode: 'boolean' }).default(false).notNull(),
+  description: text('description'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const couponUsages = sqliteTable('coupon_usages', {

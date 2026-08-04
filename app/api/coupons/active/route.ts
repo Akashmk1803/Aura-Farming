@@ -17,8 +17,11 @@ export async function GET() {
       .where(eq(coupons.isActive, true))
       .all();
 
-    // Default to the highest percentage coupon
-    const bestCoupon = activeCoupons.sort((a, b) => b.discountValue - a.discountValue)[0] || null;
+    // Find the designated welcome coupon, fallback to highest percentage if none specified
+    let bestCoupon = activeCoupons.find(c => c.isWelcome) || null;
+    if (!bestCoupon) {
+      bestCoupon = activeCoupons.sort((a, b) => b.discountValue - a.discountValue)[0] || null;
+    }
 
     let showWelcomePopup = false;
 
